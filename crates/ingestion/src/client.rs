@@ -11,11 +11,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_nats::Client as NatsClient;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
-
-use qonduit_core::RequestResponseHeader;
 
 use crate::decoder::PacketDecoder;
 use crate::peer_manager::PeerManager;
@@ -24,6 +21,9 @@ use crate::protocol;
 /// Maximum number of peers to try per reconnection cycle before giving up
 /// and waiting for the reconnect delay.
 const MAX_PEERS_PER_ATTEMPT: usize = 8;
+
+/// How often to send CurrentTickInfo requests (in seconds).
+const TICK_REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Configuration for the ingestion client.
 #[derive(Debug, Clone)]
@@ -101,11 +101,7 @@ pub struct IngestionClient {
 
 impl IngestionClient {
     /// Create a new client from config and NATS connection.
-    ///
-    /// Builds the `PeerManager` from the config's bootstrap addresses
-    /// and optional explicit `node_addr`.
     pub fn new(config: IngestionConfig, nats: NatsClient) -> Self {
-        // Collect bootstrap addresses: explicit node + any additional bootstraps.
         let mut bootstrap: Vec<SocketAddr> = config.bootstrap_addrs.clone();
         if let Some(addr) = config.node_addr {
             if !bootstrap.contains(&addr) {
@@ -161,7 +157,6 @@ impl IngestionClient {
     /// Run the ingestion loop. Reconnects on failure.
     pub async fn run(&mut self) -> Result<()> {
         // Step 1: Attempt to bootstrap from the Qubic discovery API.
-        // This is non-fatal -- if it fails we proceed with static peers.
         match self.peer_manager.bootstrap_from_api().await {
             Ok(()) => {
                 info!(
@@ -198,14 +193,10 @@ impl IngestionClient {
     }
 
     /// Try to connect to peers, perform handshake, and enter the read loop.
-    ///
-    /// Iterates through up to `MAX_PEERS_PER_ATTEMPT` peers before returning
-    /// an error to let the outer loop apply the reconnect delay.
     async fn connect_and_read(&mut self) -> Result<()> {
         let mut attempts = 0usize;
 
         while attempts < MAX_PEERS_PER_ATTEMPT {
-            // Pick the best peer from the manager.
             let addr = match self.peer_manager.best_peer().await {
                 Some(a) => a,
                 None => {
@@ -213,18 +204,14 @@ impl IngestionClient {
                         anyhow::bail!("No peers available for connection");
                     }
                     warn!("No more peers to try after {attempts} attempts");
-                    anyhow::bail!(
-                        "Exhausted all peer candidates ({attempts} attempted)"
-                    );
+                    anyhow::bail!("Exhausted all peer candidates ({attempts} attempted)");
                 }
             };
 
             attempts += 1;
-            info!(
-                "Connecting to {addr} (attempt {attempts}/{MAX_PEERS_PER_ATTEMPT})..."
-            );
+            info!("Connecting to {addr} (attempt {attempts}/{MAX_PEERS_PER_ATTEMPT})...");
 
-            // Attempt TCP connection.
+            // TCP connect.
             let mut stream = match tokio::time::timeout(
                 self.config.tcp_timeout,
                 TcpStream::connect(addr),
@@ -244,27 +231,18 @@ impl IngestionClient {
                 }
             };
 
-            // Peer exchange handshake.
-            let local_peers: [[u8; 4]; 4] = [[127, 0, 0, 1]; 4];
-            match protocol::exchange_public_peers(&mut stream, &local_peers).await {
-                Ok(peers) => {
-                    info!(
-                        "Peer exchange complete with {addr}, received {} peer entries",
-                        peers.len()
-                    );
-                    // Feed discovered peers back into the manager.
-                    self.peer_manager
-                        .add_peers_from_exchange(&peers)
-                        .await;
-                }
-                Err(e) => {
-                    warn!("Peer exchange with {addr} failed: {e:#}");
-                    self.peer_manager.mark_failure(&addr).await;
-                    continue;
-                }
+            // Enable TCP_NODELAY for low latency.
+            let _ = stream.set_nodelay(true);
+
+            // Peer exchange handshake — fire-and-forget (no response expected).
+            let local_peers: [[u8; 4]; 4] = [[0, 0, 0, 0]; 4];
+            if let Err(e) = protocol::exchange_public_peers(&mut stream, &local_peers).await {
+                warn!("Peer exchange with {addr} failed: {e:#}");
+                self.peer_manager.mark_failure(&addr).await;
+                continue;
             }
 
-            // Mark the peer as healthy.
+            // Mark the peer as healthy immediately after successful handshake.
             self.peer_manager.mark_success(&addr).await;
             info!("Connected and authenticated with {addr}");
 
@@ -272,24 +250,22 @@ impl IngestionClient {
             match protocol::request_current_tick_info(&mut stream).await {
                 Ok(data) if data.len() >= 6 => {
                     let epoch = u16::from_le_bytes([data[0], data[1]]);
-                    let tick =
-                        u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
+                    let tick = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
                     info!("Current state: epoch={epoch}, tick={tick}");
                     self.current_epoch = epoch;
                     self.current_tick = tick;
                 }
                 Ok(data) => {
-                    warn!(
-                        "CurrentTickInfo response too short: {} bytes",
-                        data.len()
-                    );
+                    warn!("CurrentTickInfo response too short: {} bytes", data.len());
                 }
                 Err(e) => {
                     warn!("Failed to request current tick info: {e:#}");
+                    // Don't bail — the node might still broadcast data.
+                    // We'll keep trying in the read loop.
                 }
             }
 
-            // Read loop -- runs until the connection drops.
+            // Enter the main read loop — runs until the connection drops.
             return self.read_loop(&mut stream, addr).await;
         }
 
@@ -298,80 +274,61 @@ impl IngestionClient {
 
     /// Read packets from the stream and publish them to NATS.
     ///
-    /// Returns when the connection is lost or an unrecoverable read error
-    /// occurs. The `addr` is used only for marking failure on abnormal exit.
+    /// Periodically sends CurrentTickInfo requests to keep epoch/tick updated.
     async fn read_loop(
-        &self,
+        &mut self,
         stream: &mut TcpStream,
         addr: SocketAddr,
     ) -> Result<()> {
-        loop {
-            match self.read_packet(stream).await {
-                Ok((msg_type, dejavu, payload)) => {
-                    debug!(
-                        "Packet: type={msg_type}, dejavu={dejavu}, payload_len={}",
-                        payload.len()
-                    );
+        let mut tick_request_interval = tokio::time::interval(TICK_REQUEST_INTERVAL);
+        tick_request_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-                    if let Err(e) = self
-                        .decoder
-                        .decode_and_publish(msg_type, dejavu, &payload, &self.nats)
-                        .await
-                    {
-                        warn!("Decode/publish error for type {msg_type}: {e:#}");
+        loop {
+            tokio::select! {
+                // Read incoming packets
+                result = protocol::read_packet(stream) => {
+                    match result {
+                        Ok((msg_type, dejavu, payload)) => {
+                            debug!(
+                                "Packet: type={msg_type}, dejavu={dejavu}, payload_len={}",
+                                payload.len()
+                            );
+
+                            if let Err(e) = self
+                                .decoder
+                                .decode_and_publish(msg_type, dejavu, &payload, &self.nats)
+                                .await
+                            {
+                                warn!("Decode/publish error for type {msg_type}: {e:#}");
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Read loop error on {addr}: {e:#}");
+                            return Err(e);
+                        }
                     }
                 }
-                Err(e) => {
-                    warn!("Read loop error on {addr}: {e:#}");
-                    return Err(e);
+                // Periodically request current tick info
+                _ = tick_request_interval.tick() => {
+                    match protocol::request_current_tick_info(stream).await {
+                        Ok(data) if data.len() >= 6 => {
+                            let epoch = u16::from_le_bytes([data[0], data[1]]);
+                            let tick = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
+                            if epoch != self.current_epoch || tick != self.current_tick {
+                                info!("Tick updated: epoch={epoch}, tick={tick}");
+                                self.current_epoch = epoch;
+                                self.current_tick = tick;
+                            }
+                        }
+                        Ok(_) => {
+                            debug!("Short CurrentTickInfo response");
+                        }
+                        Err(e) => {
+                            warn!("Periodic tick info request failed: {e:#}");
+                        }
+                    }
                 }
             }
-        }
-    }
-
-    /// Read a single packet (header + payload) from the stream.
-    async fn read_packet(
-        &self,
-        stream: &mut TcpStream,
-    ) -> Result<(u8, u32, Vec<u8>)> {
-        // Read 8-byte header.
-        let mut header_buf = [0u8; 8];
-        self.read_exact_timeout(stream, &mut header_buf)
-            .await
-            .context("Failed to read header")?;
-
-        // Parse header.
-        let header =
-            unsafe { &*(&header_buf as *const [u8; 8] as *const RequestResponseHeader) };
-
-        let msg_type = header.msg_type();
-        let dejavu = header.dejavu();
-        let payload_size = header.payload_size() as usize;
-
-        // Read payload.
-        let payload = if payload_size > 0 {
-            let mut buf = vec![0u8; payload_size];
-            self.read_exact_timeout(stream, &mut buf)
-                .await
-                .with_context(|| format!("Failed to read payload (type={msg_type})"))?;
-            buf
-        } else {
-            Vec::new()
-        };
-
-        Ok((msg_type, dejavu, payload))
-    }
-
-    /// Read exactly `buf.len()` bytes with a timeout.
-    async fn read_exact_timeout(
-        &self,
-        stream: &mut TcpStream,
-        buf: &mut [u8],
-    ) -> Result<()> {
-        match tokio::time::timeout(self.config.tcp_timeout, stream.read_exact(buf)).await {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(e)) => Err(e).context("Read error"),
-            Err(_) => Err(anyhow::anyhow!("Read timeout")),
         }
     }
 }
