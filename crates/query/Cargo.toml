@@ -16,4 +16,6 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+futures-util = { workspace = true }
 prometheus = { workspace = true }
+hex = { workspace = true }

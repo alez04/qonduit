@@ -83,6 +83,17 @@ pub enum CustomMessageCategory {
     ContractManagement = 10,
 }
 
+/// Decoded log event from BroadcastMessage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEvent {
+    pub tick: u32,
+    pub tx_index: u32,
+    pub epoch: u16,
+    pub amount: i64,
+    pub event_type: u8,
+    pub data: Vec<u8>,
+}
+
 /// Decoded custom message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomMessage {

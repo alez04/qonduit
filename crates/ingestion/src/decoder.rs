@@ -7,20 +7,17 @@ use anyhow::Result;
 use async_nats::Client as NatsClient;
 use tracing::{debug, warn};
 
-use crate::nats_publish::NatsPublisher;
+use crate::decoders;
 
 /// Decodes raw TCP packets and publishes to NATS.
 pub struct PacketDecoder {
-    publisher: NatsPublisher,
+    // Placeholder for epoch tracking
     _current_epoch: u16,
 }
 
 impl PacketDecoder {
-    pub fn new(publisher: NatsPublisher) -> Self {
-        Self {
-            publisher,
-            _current_epoch: 0,
-        }
+    pub fn new() -> Self {
+        Self { _current_epoch: 0 }
     }
 
     /// Decode a packet and publish to the appropriate NATS subject.
@@ -82,79 +79,27 @@ impl PacketDecoder {
     }
 
     async fn decode_tick(&self, payload: &[u8], _nats: &NatsClient) -> Result<()> {
-        if payload.len() < 1708 {
-            anyhow::bail!("Tick payload too small: {} < 1708", payload.len());
-        }
-        let epoch = u16::from_le_bytes([payload[0], payload[1]]);
-        let tick_num = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
-        let timestamp = u64::from_le_bytes(payload[4112..4120].try_into().unwrap());
-        let time_lock: [u8; 32] = payload[4120..4152].try_into().unwrap();
-        let mining_nonce = u32::from_le_bytes(payload[8248..8252].try_into().unwrap());
-        let salted_spectrum_hash: [u8; 32] = payload[6200..6232].try_into().unwrap();
-        let salted_universe_hash: [u8; 32] = payload[6232..6264].try_into().unwrap();
-        let salted_computor_hash: [u8; 32] = payload[6264..6296].try_into().unwrap();
-
-        // Count signatures (non-zero 64-byte blocks)
-        let mut signature_count = 0u32;
-        for i in 0..676 {
-            let offset = 6 + i * 64;
-            let sig = &payload[offset..offset + 64];
-            if sig.iter().any(|&b| b != 0) {
-                signature_count += 1;
-            }
-        }
-
-        // Total transaction count from first slot
-        let transaction_count = u16::from_le_bytes([payload[4152], payload[4153]]);
-
-        let tick_data = qonduit_core::TickData {
-            epoch,
-            tick: tick_num,
-            timestamp,
-            time_lock,
-            mining_nonce,
-            salted_spectrum_hash,
-            salted_universe_hash,
-            salted_computor_hash,
-            transaction_count,
-            contract_counters: Vec::new(),
-            signature_count,
-        };
-
-        self.publisher.publish_tick(epoch, &tick_data).await?;
-        debug!("Tick: epoch={epoch}, tick={tick_num}");
+        let tick = decoders::decode_tick(payload)?;
+        debug!("Decoded tick: {tick:?}");
+        // TODO: publish to NATS subject SUBJECT_TICK
         Ok(())
     }
 
     async fn decode_transaction(&self, payload: &[u8], _nats: &NatsClient) -> Result<()> {
-        if payload.len() < 80 {
-            anyhow::bail!("Transaction payload too small: {} < 80", payload.len());
-        }
-        // TODO: Full transaction decode + publish to NATS
+        let tx = decoders::decode_transaction(payload)?;
+        debug!("Decoded transaction: hash={} type={} amount={}", tx.hash, tx.tx_type, tx.amount);
+        // TODO: publish to NATS subject SUBJECT_TX
         Ok(())
     }
 
     async fn decode_computors(&self, payload: &[u8], _nats: &NatsClient) -> Result<()> {
-        if payload.len() < 21626 {
-            anyhow::bail!("Computors payload too small: {} < 21626", payload.len());
-        }
-        let epoch = u16::from_le_bytes([payload[0], payload[1]]);
-
-        let mut public_keys = Vec::with_capacity(676);
-        for i in 0..676 {
-            let offset = 2 + i * 32;
-            let key: [u8; 32] = payload[offset..offset + 32].try_into().unwrap();
-            public_keys.push(key);
-        }
-
-        let computors = qonduit_core::Computors {
-            epoch,
-            public_keys,
-            public_key_identities: Vec::new(),
-        };
-
-        self.publisher.publish_computors(epoch, &computors).await?;
-        debug!("Computors: epoch={epoch}");
+        let computors = decoders::decode_computors(payload)?;
+        debug!(
+            "Decoded computors: epoch={}, keys={}",
+            computors.epoch,
+            computors.public_keys.len()
+        );
+        // TODO: publish to NATS subject SUBJECT_COMPUTORS
         Ok(())
     }
 
@@ -164,28 +109,38 @@ impl PacketDecoder {
         _dejavu: u32,
         _nats: &NatsClient,
     ) -> Result<()> {
-        if payload.len() < 104 {
-            anyhow::bail!("Entity payload too small: {} < 104", payload.len());
-        }
-        // TODO: Full entity decode + publish
+        let entity = decoders::decode_entity(payload)?;
+        debug!(
+            "Decoded entity: identity={} incoming={} outgoing={}",
+            entity.identity, entity.incoming, entity.outgoing
+        );
+        // TODO: publish to NATS subject SUBJECT_ENTITY
         Ok(())
     }
 
     async fn decode_contract_ipo(
         &self,
-        _payload: &[u8],
-        _dejavu: u32,
+        payload: &[u8],
+        dejavu: u32,
         _nats: &NatsClient,
     ) -> Result<()> {
-        // TODO: Decode contract IPO bids
+        let ipo = decoders::decode_contract_ipo(payload, dejavu)?;
+        debug!(
+            "Decoded contract IPO: contract_index={}, bids={}",
+            ipo.contract_index,
+            ipo.bids.len()
+        );
+        // TODO: publish to NATS subject SUBJECT_CONTRACT
         Ok(())
     }
 
     async fn decode_system_info(&self, payload: &[u8], _nats: &NatsClient) -> Result<()> {
-        if payload.len() < 144 {
-            anyhow::bail!("SystemInfo payload too small: {} < 144", payload.len());
-        }
-        // TODO: Decode system info + publish
+        let info = decoders::decode_system_info(payload)?;
+        debug!(
+            "Decoded system info: version={} tick={} peers={}",
+            info.version, info.current_tick, info.peer_count
+        );
+        // TODO: publish to NATS or use for internal state
         Ok(())
     }
 
@@ -194,10 +149,12 @@ impl PacketDecoder {
         payload: &[u8],
         _nats: &NatsClient,
     ) -> Result<()> {
-        if payload.len() < 14 {
-            anyhow::bail!("CurrentTickInfo payload too small: {} < 14", payload.len());
-        }
-        // TODO: Decode + publish
+        let info = decoders::decode_current_tick_info(payload)?;
+        debug!(
+            "Decoded current tick info: epoch={} tick={} aligned={} misaligned={}",
+            info.epoch, info.tick, info.number_of_aligned_votes, info.number_of_misaligned_votes
+        );
+        // TODO: publish to NATS or use for internal state
         Ok(())
     }
 
@@ -207,16 +164,19 @@ impl PacketDecoder {
         _dejavu: u32,
         _nats: &NatsClient,
     ) -> Result<()> {
-        // TODO: Decode response + publish
+        // TODO: Implement contract function response decoding
+        debug!("Received contract function response (decoder not yet implemented)");
         Ok(())
     }
 
     async fn decode_broadcast_message(
         &self,
-        _payload: &[u8],
+        payload: &[u8],
         _nats: &NatsClient,
     ) -> Result<()> {
-        // TODO: Decode log events and publish to appropriate subjects
+        let events = decoders::decode_log_events(payload)?;
+        debug!("Decoded {} log events from broadcast message", events.len());
+        // TODO: publish each event to NATS subject SUBJECT_CUSTOM_MESSAGE
         Ok(())
     }
 }

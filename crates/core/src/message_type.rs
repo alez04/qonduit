@@ -176,3 +176,51 @@ impl NetworkMessageType {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_variants_parseable() {
+        let test_cases: &[(u8, NetworkMessageType)] = &[
+            (0, NetworkMessageType::ExchangePublicPeers),
+            (1, NetworkMessageType::BroadcastMessage),
+            (2, NetworkMessageType::BroadcastComputors),
+            (3, NetworkMessageType::BroadcastTick),
+            (11, NetworkMessageType::RequestComputors),
+            (24, NetworkMessageType::BroadcastTransaction),
+            (27, NetworkMessageType::RequestCurrentTickInfo),
+            (28, NetworkMessageType::RespondCurrentTickInfo),
+            (35, NetworkMessageType::EndResponse),
+            (42, NetworkMessageType::RequestContractFunction),
+            (43, NetworkMessageType::RespondContractFunction),
+            (54, NetworkMessageType::TryAgain),
+            (255, NetworkMessageType::SpecialCommand),
+        ];
+        for (val, expected) in test_cases {
+            assert_eq!(
+                NetworkMessageType::from_u8(*val),
+                Some(*expected),
+                "failed for {val}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_invalid_type() {
+        assert_eq!(NetworkMessageType::from_u8(99), None);
+        assert_eq!(NetworkMessageType::from_u8(254), None);
+    }
+
+    #[test]
+    fn test_request_response_classification() {
+        assert!(NetworkMessageType::RequestCurrentTickInfo.is_request());
+        assert!(!NetworkMessageType::RequestCurrentTickInfo.is_response());
+        assert!(NetworkMessageType::RespondCurrentTickInfo.is_response());
+        assert!(!NetworkMessageType::RespondCurrentTickInfo.is_request());
+        assert!(NetworkMessageType::BroadcastTick.is_broadcast());
+        assert!(!NetworkMessageType::BroadcastTick.is_request());
+        assert!(!NetworkMessageType::BroadcastTick.is_response());
+    }
+}

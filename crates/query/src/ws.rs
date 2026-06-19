@@ -7,57 +7,180 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::State,
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
+    response::IntoResponse,
     routing::get,
 };
+use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
+use tracing::{info, warn};
 
 use crate::AppState;
+
+#[derive(Deserialize)]
+struct WsQuery {
+    /// Optional: filter by epoch number.
+    epoch: Option<u16>,
+}
 
 /// Build WebSocket routes.
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/ws/tick", get(ws_tick_placeholder))
-        .route("/ws/tx", get(ws_tx_placeholder))
-        .route("/ws/entity", get(ws_entity_placeholder))
-        .route("/ws/spectrum", get(ws_spectrum_placeholder))
-        .route("/ws/custom-message", get(ws_custom_message_placeholder))
-        .route("/ws/contract-fn", get(ws_contract_fn_placeholder))
+        .route("/ws/tick", get(ws_tick))
+        .route("/ws/tx", get(ws_tx))
+        .route("/ws/entity", get(ws_entity))
+        .route("/ws/spectrum", get(ws_spectrum))
+        .route("/ws/custom-message", get(ws_custom_message))
+        .route("/ws/contract-fn", get(ws_contract_fn))
 }
 
-// Placeholder handlers — will be replaced with actual WebSocket upgrade logic.
+// ---------------------------------------------------------------------------
+// Per-topic upgrade handlers
+// ---------------------------------------------------------------------------
 
-async fn ws_tick_placeholder(
-    State(_state): State<Arc<AppState>>,
-) -> &'static str {
-    "WebSocket endpoint: tick — not yet implemented"
+async fn ws_tick(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = match query.epoch {
+        Some(epoch) => format!("Q.{epoch}.QONDUIT.TICK"),
+        None => "Q.*.QONDUIT.TICK".to_string(),
+    };
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
-async fn ws_tx_placeholder(
-    State(_state): State<Arc<AppState>>,
-) -> &'static str {
-    "WebSocket endpoint: tx — not yet implemented"
+async fn ws_tx(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = match query.epoch {
+        Some(epoch) => format!("Q.{epoch}.QONDUIT.TX"),
+        None => "Q.*.QONDUIT.TX".to_string(),
+    };
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
-async fn ws_entity_placeholder(
-    State(_state): State<Arc<AppState>>,
-) -> &'static str {
-    "WebSocket endpoint: entity — not yet implemented"
+async fn ws_entity(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = match query.epoch {
+        Some(epoch) => format!("Q.{epoch}.QONDUIT.ENTITY"),
+        None => "Q.*.QONDUIT.ENTITY".to_string(),
+    };
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
-async fn ws_spectrum_placeholder(
-    State(_state): State<Arc<AppState>>,
-) -> &'static str {
-    "WebSocket endpoint: spectrum — not yet implemented"
+async fn ws_spectrum(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = match query.epoch {
+        Some(epoch) => format!("Q.{epoch}.QONDUIT.SPECTRUM"),
+        None => "Q.*.QONDUIT.SPECTRUM".to_string(),
+    };
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
-async fn ws_custom_message_placeholder(
-    State(_state): State<Arc<AppState>>,
-) -> &'static str {
-    "WebSocket endpoint: custom-message — not yet implemented"
+async fn ws_custom_message(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = match query.epoch {
+        Some(epoch) => format!("Q.{epoch}.QONDUIT.CUSTMSG"),
+        None => "Q.*.QONDUIT.CUSTMSG".to_string(),
+    };
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
-async fn ws_contract_fn_placeholder(
-    State(_state): State<Arc<AppState>>,
-) -> &'static str {
-    "WebSocket endpoint: contract-fn — not yet implemented"
+async fn ws_contract_fn(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = match query.epoch {
+        Some(epoch) => format!("Q.{epoch}.QONDUIT.CFNR"),
+        None => "Q.*.QONDUIT.CFNR".to_string(),
+    };
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+// ---------------------------------------------------------------------------
+// Shared handler
+// ---------------------------------------------------------------------------
+
+/// Subscribe to a NATS subject and forward every message to the WebSocket
+/// client. The connection stays open until either side closes it.
+async fn handle_ws_subscription(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    subject: String,
+) {
+    info!("WebSocket client subscribing to: {subject}");
+
+    // Subscribe to NATS
+    let mut sub = match state.nats.subscribe(subject.clone()).await {
+        Ok(sub) => sub,
+        Err(e) => {
+            warn!("Failed to subscribe to {subject}: {e}");
+            let _ = socket
+                .send(Message::Text(
+                    format!("{{\"error\": \"subscribe failed: {e}\"}}").into(),
+                ))
+                .await;
+            return;
+        }
+    };
+
+    // Send connected confirmation
+    let _ = socket
+        .send(Message::Text(
+            serde_json::json!({"status": "connected", "subject": subject})
+                .to_string()
+                .into(),
+        ))
+        .await;
+
+    // Bidirectional loop: forward NATS messages to WS, handle WS control
+    // messages (ping/pong/close).
+    loop {
+        tokio::select! {
+            // NATS message -> WebSocket
+            msg = sub.next() => {
+                match msg {
+                    Some(msg) => {
+                        let payload = String::from_utf8_lossy(&msg.payload);
+                        if socket
+                            .send(Message::Text(payload.to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            break; // Client disconnected
+                        }
+                    }
+                    None => break, // NATS subscription closed
+                }
+            }
+            // WebSocket message -> handle ping/pong/close
+            ws_msg = socket.recv() => {
+                match ws_msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = socket.send(Message::Pong(data)).await;
+                    }
+                    _ => {} // Ignore other messages
+                }
+            }
+        }
+    }
+
+    info!("WebSocket client disconnected from: {subject}");
 }

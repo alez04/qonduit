@@ -142,4 +142,43 @@ mod tests {
         let s = "a".repeat(IDENTITY_LENGTH);
         assert!(decode_base26(&s).is_none());
     }
+
+    #[test]
+    fn test_encode_length() {
+        let key = [0xFFu8; 32];
+        let identity = encode_base26(&key);
+        assert_eq!(identity.len(), IDENTITY_LENGTH);
+    }
+
+    #[test]
+    fn test_all_a_identity() {
+        // All A's should decode to all zeros
+        let identity = "A".repeat(IDENTITY_LENGTH);
+        let bytes = decode_base26(&identity).unwrap();
+        assert_eq!(bytes, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_deterministic() {
+        let key = [1u8; 32];
+        let a = encode_base26(&key);
+        let b = encode_base26(&key);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_different_keys_different_identity() {
+        let a = encode_base26(&[0u8; 32]);
+        let b = encode_base26(&[1u8; 32]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_max_key() {
+        let key = [0xFFu8; 32];
+        let identity = encode_base26(&key);
+        assert!(identity.chars().all(|c| c >= 'A' && c <= 'Z'));
+        let decoded = decode_base26(&identity).unwrap();
+        assert_eq!(decoded, key);
+    }
 }

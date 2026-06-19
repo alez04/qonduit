@@ -43,9 +43,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(rest::routes())
         .merge(rpc::routes())
         .merge(ws::routes())
-        .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }
 
 /// Start the query server.

@@ -54,6 +54,7 @@ zerocopy = { version = "0.7", features = ["derive"] }
 prometheus = "0.13"
 
 # Misc
+futures-util = "0.3"
 chrono = "0.4"
 bytes = "1"
 hex = "0.4"

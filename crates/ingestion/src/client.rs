@@ -15,7 +15,6 @@ use tracing::{debug, error, info, warn};
 use qonduit_core::RequestResponseHeader;
 
 use crate::decoder::PacketDecoder;
-use crate::nats_publish::NatsPublisher;
 use crate::protocol;
 
 /// Configuration for the ingestion client.
@@ -50,11 +49,10 @@ pub struct IngestionClient {
 
 impl IngestionClient {
     pub fn new(config: IngestionConfig, nats: NatsClient) -> Self {
-        let publisher = NatsPublisher::new(nats.clone());
         Self {
             config,
             nats,
-            decoder: PacketDecoder::new(publisher),
+            decoder: PacketDecoder::new(),
             current_epoch: 0,
             current_tick: 0,
         }

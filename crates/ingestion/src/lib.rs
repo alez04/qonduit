@@ -3,6 +3,7 @@
 
 pub mod client;
 pub mod decoder;
+pub mod decoders;
 pub mod nats_publish;
 pub mod nats_setup;
 pub mod protocol;
