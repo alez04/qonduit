@@ -106,14 +106,10 @@ struct IngestionConfig {
 impl Default for IngestionConfig {
     fn default() -> Self {
         Self {
-            node_addr: Some(default_node_addr()),
+            node_addr: None, // peer discovery handles finding nodes automatically
             bootstrap_addrs: Vec::new(),
         }
     }
-}
-
-fn default_node_addr() -> String {
-    "127.0.0.1:21841".to_string()
 }
 
 // ---------------------------------------------------------------------------

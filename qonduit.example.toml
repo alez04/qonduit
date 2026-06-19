@@ -10,4 +10,7 @@ data_dir = "./data"
 listen_addr = "0.0.0.0:8080"
 
 [ingestion]
-node_addr = "127.0.0.1:21841"
+# Optional: explicit node address (peer discovery finds nodes automatically)
+# node_addr = "1.2.3.4:21841"
+# Optional: additional bootstrap nodes
+# bootstrap_addrs = ["5.6.7.8:21841"]
