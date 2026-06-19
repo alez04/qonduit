@@ -246,11 +246,11 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Ingestion client (optional — skip if no node address AND no bootstrap addrs configured)
-    let should_run_ingestion = config.ingestion.node_addr.is_some()
-        || !config.ingestion.bootstrap_addrs.is_empty();
-    let ingestion_handle = if !should_run_ingestion {
-        info!("No node address or bootstrap addrs configured, skipping ingestion (query-only mode)");
+    // Ingestion client — always runs (peer discovery finds nodes automatically).
+    // Set QONDUIT_NODE_ADDR=disabled to skip ingestion (query-only mode).
+    let ingestion_disabled = config.ingestion.node_addr.as_deref() == Some("disabled");
+    let ingestion_handle = if ingestion_disabled {
+        info!("Ingestion disabled via config, running in query-only mode");
         None
     } else {
         // Build ingestion config
