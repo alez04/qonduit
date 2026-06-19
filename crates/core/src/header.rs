@@ -133,8 +133,8 @@ mod tests {
     fn test_roundtrip() {
         let original = RequestResponseHeader::new_request(42, 1024, 0x12345678);
         let bytes: [u8; 8] = unsafe { std::mem::transmute(original) };
-        let restored: &RequestResponseHeader =
-            unsafe { &*(&bytes as *const [u8; 8] as *const RequestResponseHeader) };
+        let restored: RequestResponseHeader =
+            unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const RequestResponseHeader) };
         assert_eq!(restored.msg_type(), 42);
         assert_eq!(restored.payload_size(), 1024);
         assert_eq!(restored.dejavu(), 0x12345678);
