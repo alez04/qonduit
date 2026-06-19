@@ -160,3 +160,54 @@ pub const CUSTOM_MESSAGE_OP_END_DISTRIBUTE_DIVIDENDS: u64 = 6_217_575_821_008_45
 pub const CUSTOM_MESSAGE_OP_START_EPOCH: u64 = 4_850_183_582_582_395_987;
 /// END_EPOC: End epoch.
 pub const CUSTOM_MESSAGE_OP_END_EPOCH: u64 = 4_850_183_582_582_591_045;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quorum() {
+        assert_eq!(QUORUM, 451);
+        assert!(QUORUM > NUMBER_OF_COMPUTORS / 2);
+    }
+
+    #[test]
+    fn test_special_event_indices() {
+        assert_eq!(SC_INITIALIZE_TX, 4096);
+        assert_eq!(SC_BEGIN_EPOCH_TX, 4097);
+        assert_eq!(SC_BEGIN_TICK_TX, 4098);
+        assert_eq!(SC_END_TICK_TX, 4099);
+        assert_eq!(SC_END_EPOCH_TX, 4100);
+        assert_eq!(SC_NOTIFICATION_TX, 4101);
+    }
+
+    #[test]
+    fn test_log_tx_per_tick() {
+        assert_eq!(
+            LOG_TX_PER_TICK,
+            NUMBER_OF_TRANSACTIONS_PER_TICK + NUMBER_OF_SPECIAL_EVENT_PER_TICK
+        );
+        assert_eq!(LOG_TX_PER_TICK, 4102);
+    }
+
+    #[test]
+    fn test_log_event_types_contiguous() {
+        assert_eq!(LOG_QU_TRANSFER, 0);
+        assert_eq!(LOG_ORACLE_SUBSCRIBER_MESSAGE, 15);
+        assert_eq!(LOG_CUSTOM_MESSAGE, 255);
+    }
+
+    #[test]
+    fn test_issuance_rate() {
+        assert_eq!(ISSUANCE_RATE, 1_000_000_000_000);
+        assert_eq!(MAX_AMOUNT, ISSUANCE_RATE * 1000);
+    }
+
+    #[test]
+    fn test_asset_types() {
+        assert_eq!(ASSET_TYPE_EMPTY, 0);
+        assert_eq!(ASSET_TYPE_ISSUANCE, 1);
+        assert_eq!(ASSET_TYPE_OWNERSHIP, 2);
+        assert_eq!(ASSET_TYPE_POSSESSION, 3);
+    }
+}

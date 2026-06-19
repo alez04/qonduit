@@ -344,7 +344,7 @@ pub fn decode_log_events(payload: &[u8]) -> Result<Vec<LogEvent>> {
         );
     }
 
-    let tick = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let _tick = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     // bytes 4-7 are padding or message index
 
     let mut events = Vec::new();
