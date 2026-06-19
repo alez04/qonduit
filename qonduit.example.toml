@@ -1,0 +1,13 @@
+# Qonduit configuration
+
+[nats]
+url = "nats://localhost:4222"
+
+[storage]
+data_dir = "./data"
+
+[query]
+listen_addr = "0.0.0.0:8080"
+
+[ingestion]
+node_addr = "127.0.0.1:21841"

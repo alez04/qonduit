@@ -1,0 +1,24 @@
+[package]
+name = "qonduit"
+version.workspace = true
+edition.workspace = true
+description = "Qonduit: high-performance Qubic blockchain indexer and RPC server"
+
+[[bin]]
+name = "qonduit"
+path = "src/main.rs"
+
+[dependencies]
+qonduit-core = { path = "../core" }
+qonduit-ingestion = { path = "../ingestion" }
+qonduit-processor = { path = "../processor" }
+qonduit-storage = { path = "../storage" }
+qonduit-query = { path = "../query" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }
+async-nats = { workspace = true }

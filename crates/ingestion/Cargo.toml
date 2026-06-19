@@ -1,0 +1,14 @@
+[package]
+name = "qonduit-ingestion"
+version.workspace = true
+edition.workspace = true
+description = "TCP ingestion worker: connects to Qubic nodes and publishes events to NATS"
+
+[dependencies]
+qonduit-core = { path = "../core" }
+tokio = { workspace = true }
+async-nats = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+zerocopy = { workspace = true }

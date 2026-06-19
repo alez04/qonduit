@@ -1,0 +1,14 @@
+[package]
+name = "qonduit-processor"
+version.workspace = true
+edition.workspace = true
+description = "Event processor: consumes from NATS, builds derived indexes in RocksDB"
+
+[dependencies]
+qonduit-core = { path = "../core" }
+tokio = { workspace = true }
+async-nats = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

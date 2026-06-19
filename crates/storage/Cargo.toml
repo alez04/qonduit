@@ -1,0 +1,15 @@
+[package]
+name = "qonduit-storage"
+version.workspace = true
+edition.workspace = true
+description = "Storage engine: hot tier (RAM), warm tier (RocksDB), cold tier (Parquet)"
+
+[dependencies]
+qonduit-core = { path = "../core" }
+tokio = { workspace = true }
+rocksdb = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }

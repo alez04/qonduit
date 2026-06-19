@@ -1,0 +1,15 @@
+[package]
+name = "qonduit-core"
+version.workspace = true
+edition.workspace = true
+description = "Protocol structs, constants, and shared types for Qonduit"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+zerocopy = { workspace = true }
+bytes = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
