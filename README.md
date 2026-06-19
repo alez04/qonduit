@@ -29,7 +29,24 @@ Qubic Node ─TCP─→ Ingestion ─JSON─→ NATS JetStream ──→ Process
 
 ## Quick Start
 
-### Docker Compose (recommended)
+### Install (prebuilt binary)
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/alez04/qonduit/main/install.sh | bash
+```
+
+This auto-detects your platform (Linux/macOS/Windows, x86_64/arm64) and installs the latest release to `/usr/local/bin/qonduit`.
+
+Options:
+```bash
+# Install a specific version
+VERSION=v0.1.0 bash install.sh
+
+# Install to a custom directory
+INSTALL_DIR=~/.local/bin bash install.sh
+```
+
+### Docker Compose
 
 ```bash
 docker compose up -d
@@ -43,7 +60,7 @@ QONDUIT_NODE_ADDR=your-node-ip:21841 docker compose up -d
 
 ### From Source
 
-**Prerequisites**: Rust 1.96+, CMake, libclang, pkg-config, zlib
+**Prerequisites**: Rust 1.75+, CMake, libclang, pkg-config, zlib
 
 ```bash
 # Clone
