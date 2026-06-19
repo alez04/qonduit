@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use serde::Deserialize;
 use tracing::{info, warn};
 

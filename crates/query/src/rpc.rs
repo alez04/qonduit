@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use axum::{Router, extract::State, response::IntoResponse, routing::post, Json};
+use axum::{Router, extract::State, routing::post, Json};
 use serde::{Deserialize, Serialize};
 use qonduit_core::identity;
 
