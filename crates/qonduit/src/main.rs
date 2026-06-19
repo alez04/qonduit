@@ -242,34 +242,40 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Ingestion client
-    let ingestion_handle = {
-        let nats = nats.clone();
-        let node_addr: std::net::SocketAddr = config
-            .ingestion
-            .node_addr
-            .parse()
-            .context("Invalid node address")?;
-        tokio::spawn(async move {
-            let client = qonduit_ingestion::IngestionClient::new(
-                qonduit_ingestion::client::IngestionConfig {
-                    node_addr,
-                    tcp_timeout: Duration::from_secs(30),
-                    reconnect_delay: Duration::from_secs(5),
-                },
-                nats,
-            );
-            tokio::select! {
-                result = client.run() => {
-                    if let Err(e) = result {
-                        tracing::error!("Ingestion error: {e:#}");
+    // Ingestion client (optional — skip if no node address configured)
+    let ingestion_handle = if config.ingestion.node_addr.is_empty() {
+        info!("No node address configured, skipping ingestion (query-only mode)");
+        None
+    } else {
+        match config.ingestion.node_addr.parse::<std::net::SocketAddr>() {
+            Ok(addr) => {
+                let nats = nats.clone();
+                Some(tokio::spawn(async move {
+                    let client = qonduit_ingestion::IngestionClient::new(
+                        qonduit_ingestion::client::IngestionConfig {
+                            node_addr: addr,
+                            tcp_timeout: Duration::from_secs(30),
+                            reconnect_delay: Duration::from_secs(5),
+                        },
+                        nats,
+                    );
+                    tokio::select! {
+                        result = client.run() => {
+                            if let Err(e) = result {
+                                tracing::error!("Ingestion error: {e:#}");
+                            }
+                        }
+                        _ = ingestion_stop_rx.changed() => {
+                            info!("Ingestion shutting down");
+                        }
                     }
-                }
-                _ = ingestion_stop_rx.changed() => {
-                    info!("Ingestion shutting down");
-                }
+                }))
             }
-        })
+            Err(e) => {
+                tracing::warn!("Invalid node address '{}', skipping ingestion: {e}", config.ingestion.node_addr);
+                None
+            }
+        }
     };
 
     info!("Qonduit is running — all services started");
@@ -280,10 +286,12 @@ async fn main() -> Result<()> {
 
     // Phase 1: Stop ingestion — no new data enters the pipeline
     let _ = ingestion_stop_tx.send(true);
-    match tokio::time::timeout(Duration::from_secs(10), ingestion_handle).await {
-        Ok(Ok(())) => info!("Ingestion stopped gracefully"),
-        Ok(Err(e)) => tracing::warn!("Ingestion task panicked: {e}"),
-        Err(_) => info!("Ingestion did not stop within timeout"),
+    if let Some(handle) = ingestion_handle {
+        match tokio::time::timeout(Duration::from_secs(10), handle).await {
+            Ok(Ok(())) => info!("Ingestion stopped gracefully"),
+            Ok(Err(e)) => tracing::warn!("Ingestion task panicked: {e}"),
+            Err(_) => info!("Ingestion did not stop within timeout"),
+        }
     }
 
     // Phase 2: Wait for processor to drain remaining NATS messages

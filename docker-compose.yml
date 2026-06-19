@@ -15,7 +15,7 @@ services:
     environment:
       - QONDUIT_NATS_URL=nats://nats:4222
       - QONDUIT_LISTEN_ADDR=0.0.0.0:8080
-      - QONDUIT_NODE_ADDR=host.docker.internal:21841
+      - QONDUIT_NODE_ADDR=
       - QONDUIT_DATA_DIR=/data
     volumes:
       - qonduit-data:/data
