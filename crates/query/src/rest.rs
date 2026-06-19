@@ -38,6 +38,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/contract-ipo/{index}", get(get_contract_ipo))
         .route("/v1/entity/{id}/transactions", get(get_entity_transactions))
         .route("/v1/search/{query}", get(search))
+        .route("/metrics", get(metrics))
 }
 
 // --- Helpers ---
@@ -62,11 +63,21 @@ fn json_or_404(data: Option<Vec<u8>>) -> Response {
 
 // --- Handlers ---
 
+async fn metrics() -> impl IntoResponse {
+    crate::metrics::REST_REQUESTS.inc();
+    let body = crate::metrics::render_metrics();
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
+}
+
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
 }
 
 async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    crate::metrics::REST_REQUESTS.inc();
     match (
         state.storage.get_current_tick(),
         state.storage.get_current_epoch(),
@@ -84,6 +95,7 @@ async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 async fn current_tick(State(state): State<Arc<AppState>>) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_current_tick() {
         Ok(Some(tick)) => match state.storage.get_tick(tick) {
             Ok(data) => json_or_404(data),
@@ -98,6 +110,7 @@ async fn get_tick(
     State(state): State<Arc<AppState>>,
     Path(tick): Path<u32>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_tick(tick) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -108,6 +121,7 @@ async fn get_tick_transactions(
     State(state): State<Arc<AppState>>,
     Path(tick): Path<u32>,
 ) -> impl IntoResponse {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_tx_hashes_for_tick(tick) {
         Ok(hashes) => {
             let mut txs = Vec::new();
@@ -128,6 +142,7 @@ async fn get_transaction(
     State(state): State<Arc<AppState>>,
     Path(hash_str): Path<String>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     let hash_bytes = match hex::decode(&hash_str) {
         Ok(bytes) if bytes.len() == 32 => {
             let mut arr = [0u8; 32];
@@ -146,6 +161,7 @@ async fn get_entity(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
         None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
@@ -160,6 +176,7 @@ async fn get_spectrum_entry(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
         None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
@@ -171,6 +188,7 @@ async fn get_spectrum_entry(
 }
 
 async fn get_computors(State(state): State<Arc<AppState>>) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_latest_computors() {
         Ok(Some((_epoch, data))) => json_or_404(Some(data)),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -182,6 +200,7 @@ async fn get_computors_epoch(
     State(state): State<Arc<AppState>>,
     Path(epoch): Path<u16>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_computors(epoch) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -189,6 +208,7 @@ async fn get_computors_epoch(
 }
 
 async fn get_issued_assets(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_all_assets(1000) {
         Ok(assets) => {
             let items: Vec<serde_json::Value> = assets
@@ -221,6 +241,7 @@ async fn get_asset(
     State(state): State<Arc<AppState>>,
     Path(index): Path<u32>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_asset(index) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -231,6 +252,7 @@ async fn get_contract_ipo(
     State(state): State<Arc<AppState>>,
     Path(index): Path<u32>,
 ) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
     match state.storage.get_contract_ipo(index) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -241,6 +263,7 @@ async fn get_entity_transactions(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
         None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),

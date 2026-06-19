@@ -14,6 +14,7 @@
 //! - `meta` -- metadata (current tick, epoch, etc.)
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rocksdb::{ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options, WriteBatch};
@@ -56,7 +57,7 @@ const ALL_CFS: &[&str] = &[
 /// Warm tier storage backed by RocksDB.
 #[derive(Clone)]
 pub struct WarmStorage {
-    db: DB,
+    db: Arc<DB>,
 }
 
 impl WarmStorage {
@@ -84,7 +85,7 @@ impl WarmStorage {
             .context("Failed to open RocksDB")?;
 
         info!(path = %path.display(), "Opened warm storage");
-        Ok(Self { db })
+        Ok(Self { db: Arc::new(db) })
     }
 
     // ------------------------------------------------------------------

@@ -122,16 +122,36 @@ fn test_decode_computors_valid() {
 #[test]
 fn test_decode_tick_valid() {
     let mut payload = vec![0u8; 1708];
-    // epoch = 10
+    // epoch = 10 at offset 0
     payload[0] = 10;
     payload[1] = 0;
-    // tick = 99999
-    payload[2..6].copy_from_slice(&99999u32.to_le_bytes());
+    // numberOfTransactions = 5 at offset 2
+    payload[2] = 5;
+    // numberOfSpecialEvents = 2 at offset 3
+    payload[3] = 2;
+    // tick = 99999 at offset 4
+    payload[4..8].copy_from_slice(&99999u32.to_le_bytes());
     // timestamp at offset 8
     payload[8..16].copy_from_slice(&1234567890u64.to_le_bytes());
+    // salted_spectrum_hash at offset 48 (first byte = 0xAA)
+    payload[48] = 0xAA;
+    // salted_universe_hash at offset 80 (first byte = 0xBB)
+    payload[80] = 0xBB;
+    // salted_computor_hash at offset 112 (first byte = 0xCC)
+    payload[112] = 0xCC;
+    // mining_nonce at offset 1704
+    payload[1704..1708].copy_from_slice(&42u32.to_le_bytes());
 
     let result = decoders::decode_tick(&payload).unwrap();
     assert_eq!(result.epoch, 10);
     assert_eq!(result.tick, 99999);
     assert_eq!(result.timestamp, 1234567890);
+    assert_eq!(result.number_of_transactions, 5);
+    assert_eq!(result.number_of_special_events, 2);
+    assert_eq!(result.transaction_count, 5);
+    assert_eq!(result.mining_nonce, 42);
+    assert_eq!(result.salted_spectrum_hash[0], 0xAA);
+    assert_eq!(result.salted_universe_hash[0], 0xBB);
+    assert_eq!(result.salted_computor_hash[0], 0xCC);
+    assert_eq!(result.signature_count, 0);
 }

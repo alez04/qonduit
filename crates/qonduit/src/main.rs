@@ -1,16 +1,21 @@
 //! Qonduit: high-performance Qubic blockchain indexer and RPC server.
 //!
 //! Main entry point. Reads config, initializes storage, connects to NATS,
-//! and spawns the ingestion, processing, and query tasks.
+//! and spawns the ingestion, processing, and query tasks with graceful shutdown.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
 
 #[derive(Parser, Debug)]
 #[command(name = "qonduit", version, about = "Qubic blockchain indexer and RPC server")]
@@ -20,17 +25,18 @@ struct Cli {
     config: PathBuf,
 }
 
+// ---------------------------------------------------------------------------
+// Config structs
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Deserialize, Default)]
 struct Config {
     #[serde(default)]
     nats: NatsConfig,
-
     #[serde(default)]
     storage: StorageConfig,
-
     #[serde(default)]
     query: QueryConfig,
-
     #[serde(default)]
     ingestion: IngestionConfig,
 }
@@ -107,6 +113,10 @@ fn default_node_addr() -> String {
     "127.0.0.1:21841".to_string()
 }
 
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -129,65 +139,169 @@ async fn main() -> Result<()> {
     };
 
     // Env var overrides
-    if let Ok(nats_url) = std::env::var("QONDUIT_NATS_URL") {
-        config.nats.url = nats_url;
+    if let Ok(v) = std::env::var("QONDUIT_NATS_URL") {
+        config.nats.url = v;
     }
-    if let Ok(listen) = std::env::var("QONDUIT_LISTEN_ADDR") {
-        config.query.listen_addr = listen;
+    if let Ok(v) = std::env::var("QONDUIT_LISTEN_ADDR") {
+        config.query.listen_addr = v;
     }
-    if let Ok(node) = std::env::var("QONDUIT_NODE_ADDR") {
-        config.ingestion.node_addr = node;
+    if let Ok(v) = std::env::var("QONDUIT_NODE_ADDR") {
+        config.ingestion.node_addr = v;
     }
-    if let Ok(data) = std::env::var("QONDUIT_DATA_DIR") {
-        config.storage.data_dir = PathBuf::from(data);
+    if let Ok(v) = std::env::var("QONDUIT_DATA_DIR") {
+        config.storage.data_dir = PathBuf::from(v);
     }
 
-    info!("Qonduit starting...");
+    info!("Qonduit v{} starting...", env!("CARGO_PKG_VERSION"));
     info!("  NATS: {}", config.nats.url);
     info!("  Storage: {:?}", config.storage.data_dir);
     info!("  Query: {}", config.query.listen_addr);
-    info!("  Ingestion: {}", config.ingestion.node_addr);
+    info!("  Node: {}", config.ingestion.node_addr);
 
-    // Initialize storage
-    let storage = qonduit_storage::WarmStorage::open(&config.storage.data_dir)
-        .context("Failed to open storage")?;
+    // --- Phase 1: Storage (warm tier + hot cache) ---
+    let warm_storage = qonduit_storage::WarmStorage::open(&config.storage.data_dir)
+        .context("Failed to open warm storage")?;
+    let _hot_cache = qonduit_storage::HotCache::new(1_000, 10_000);
+    info!("Storage initialized (warm tier + hot cache)");
 
-    // Connect to NATS
+    // --- Phase 2: NATS ---
     let nats = async_nats::connect(&config.nats.url)
         .await
         .context("Failed to connect to NATS")?;
-
     info!("Connected to NATS");
 
-    // Build shared app state
+    // Ensure JetStream streams exist
+    if let Err(e) = qonduit_ingestion::nats_setup::ensure_streams(&nats).await {
+        tracing::warn!("Failed to ensure NATS streams (may already exist): {e}");
+    }
+
+    // --- Phase 3: Build shared state ---
+    // Clone WarmStorage for AppState (RocksDB DB uses Arc internally, so clone is cheap)
     let app_state = Arc::new(qonduit_query::AppState {
-        storage,
+        storage: warm_storage.clone(),
         nats: nats.clone(),
     });
+    let warm_storage = Arc::new(warm_storage);
 
-    // Spawn tasks
-    let _query_handle = {
+    // --- Phase 4: Spawn tasks with graceful ordered shutdown ---
+    //
+    // Shutdown order:
+    //   1. Stop ingestion  — no new data enters the pipeline
+    //   2. Wait for processor to drain — process remaining NATS messages
+    //   3. Stop query server — last to go so clients can still read
+
+    // Per-service shutdown signals (watch channels: send `true` to stop)
+    let (ingestion_stop_tx, mut ingestion_stop_rx) = tokio::sync::watch::channel(false);
+    let (processor_stop_tx, mut processor_stop_rx) = tokio::sync::watch::channel(false);
+    let (query_stop_tx, mut query_stop_rx) = tokio::sync::watch::channel(false);
+
+    // Query server
+    let query_handle = {
         let state = app_state.clone();
-        let addr = config.query.listen_addr.parse().context("Invalid listen address")?;
+        let addr: std::net::SocketAddr = config
+            .query
+            .listen_addr
+            .parse()
+            .context("Invalid listen address")?;
         tokio::spawn(async move {
-            if let Err(e) = qonduit_query::run(
-                qonduit_query::QueryConfig { listen_addr: addr },
-                state,
-            )
-            .await
-            {
-                tracing::error!("Query server error: {e:#}");
+            tokio::select! {
+                result = qonduit_query::run(
+                    qonduit_query::QueryConfig { listen_addr: addr },
+                    state,
+                ) => {
+                    if let Err(e) = result {
+                        tracing::error!("Query server error: {e:#}");
+                    }
+                }
+                _ = query_stop_rx.changed() => {
+                    info!("Query server shutting down");
+                }
             }
         })
     };
 
-    // TODO: Spawn ingestion and processor tasks
+    // Processor
+    let processor_handle = {
+        let storage = warm_storage.clone();
+        let nats = nats.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                result = qonduit_processor::run(
+                    qonduit_processor::ProcessorConfig::default(),
+                    nats,
+                    storage,
+                ) => {
+                    if let Err(e) = result {
+                        tracing::error!("Processor error: {e:#}");
+                    }
+                }
+                _ = processor_stop_rx.changed() => {
+                    info!("Processor shutting down");
+                }
+            }
+        })
+    };
 
-    info!("Qonduit is running");
+    // Ingestion client
+    let ingestion_handle = {
+        let nats = nats.clone();
+        let node_addr: std::net::SocketAddr = config
+            .ingestion
+            .node_addr
+            .parse()
+            .context("Invalid node address")?;
+        tokio::spawn(async move {
+            let client = qonduit_ingestion::IngestionClient::new(
+                qonduit_ingestion::client::IngestionConfig {
+                    node_addr,
+                    tcp_timeout: Duration::from_secs(30),
+                    reconnect_delay: Duration::from_secs(5),
+                },
+                nats,
+            );
+            tokio::select! {
+                result = client.run() => {
+                    if let Err(e) = result {
+                        tracing::error!("Ingestion error: {e:#}");
+                    }
+                }
+                _ = ingestion_stop_rx.changed() => {
+                    info!("Ingestion shutting down");
+                }
+            }
+        })
+    };
 
-    // Wait for shutdown signal
+    info!("Qonduit is running — all services started");
+
+    // --- Wait for shutdown signal ---
     tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+    info!("Shutdown signal received, stopping services in order...");
 
+    // Phase 1: Stop ingestion — no new data enters the pipeline
+    let _ = ingestion_stop_tx.send(true);
+    match tokio::time::timeout(Duration::from_secs(10), ingestion_handle).await {
+        Ok(Ok(())) => info!("Ingestion stopped gracefully"),
+        Ok(Err(e)) => tracing::warn!("Ingestion task panicked: {e}"),
+        Err(_) => info!("Ingestion did not stop within timeout"),
+    }
+
+    // Phase 2: Wait for processor to drain remaining NATS messages
+    let _ = processor_stop_tx.send(true);
+    match tokio::time::timeout(Duration::from_secs(30), processor_handle).await {
+        Ok(Ok(())) => info!("Processor stopped gracefully"),
+        Ok(Err(e)) => tracing::warn!("Processor task panicked: {e}"),
+        Err(_) => info!("Processor did not stop within timeout"),
+    }
+
+    // Phase 3: Stop query server — last so clients can still read during drain
+    let _ = query_stop_tx.send(true);
+    match tokio::time::timeout(Duration::from_secs(5), query_handle).await {
+        Ok(Ok(())) => info!("Query server stopped gracefully"),
+        Ok(Err(e)) => tracing::warn!("Query server task panicked: {e}"),
+        Err(_) => info!("Query server did not stop within timeout"),
+    }
+
+    info!("Qonduit stopped");
     Ok(())
 }

@@ -8,59 +8,56 @@ use qonduit_core::identity::encode_base26;
 use qonduit_core::*;
 
 /// Decode a BroadcastTick payload (1708 bytes).
+///
+/// Packet layout (little-endian):
+///
+/// ```text
+/// Offset  Size  Field
+/// 0       2     epoch (u16)
+/// 2       1     number_of_transactions (u8)
+/// 3       1     number_of_special_events (u8)
+/// 4       4     tick (u32)
+/// 8       8     timestamp (u64)
+/// 16      32    salt / time_lock ([u8; 32])
+/// 48      32    salted_spectrum_hash ([u8; 32])
+/// 80      32    salted_universe_hash ([u8; 32])
+/// 112     32    salted_computor_hash ([u8; 32])
+/// 144     ...   (reserved / compressed tick flags)
+/// 1704    4     mining_nonce (u32)
+/// ```
 pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
     if payload.len() < 1708 {
         anyhow::bail!("Tick payload too small: {} < 1708", payload.len());
     }
 
+    // --- Fixed header fields ---
     let epoch = u16::from_le_bytes([payload[0], payload[1]]);
-    let tick = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
+    let number_of_transactions = payload[2];
+    let number_of_special_events = payload[3];
+    let tick = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let timestamp = u64::from_le_bytes(payload[8..16].try_into().unwrap());
 
-    // Timestamp at offset 8
-    let timestamp = u64::from_le_bytes([
-        payload[8], payload[9], payload[10], payload[11], payload[12], payload[13], payload[14],
-        payload[15],
-    ]);
-
-    // time_lock at offset 16 (32 bytes)
+    // --- Salt / time_lock at offset 16 (32 bytes) ---
     let mut time_lock = [0u8; 32];
     time_lock.copy_from_slice(&payload[16..48]);
 
-    // mining_nonce at offset 48
-    let mining_nonce = u32::from_le_bytes([payload[48], payload[49], payload[50], payload[51]]);
-
-    // salted hashes at offsets 52, 84, 116
+    // --- Salted hashes at offsets 48, 80, 112 (32 bytes each) ---
     let mut salted_spectrum_hash = [0u8; 32];
-    salted_spectrum_hash.copy_from_slice(&payload[52..84]);
+    salted_spectrum_hash.copy_from_slice(&payload[48..80]);
 
     let mut salted_universe_hash = [0u8; 32];
-    salted_universe_hash.copy_from_slice(&payload[84..116]);
+    salted_universe_hash.copy_from_slice(&payload[80..112]);
 
     let mut salted_computor_hash = [0u8; 32];
-    salted_computor_hash.copy_from_slice(&payload[116..148]);
+    salted_computor_hash.copy_from_slice(&payload[112..144]);
 
-    // transaction_count at offset 148
-    let transaction_count = u16::from_le_bytes([payload[148], payload[149]]);
+    // --- Mining nonce at offset 1704 (last 4 bytes) ---
+    let mining_nonce = u32::from_le_bytes(payload[1704..1708].try_into().unwrap());
 
-    // contract_counters at offset 150, up to 1024 entries (2048 bytes)
-    // but limited by payload size (1708 bytes)
-    let mut contract_counters = Vec::new();
-    let counters_start = 150;
-    let max_counters = (1708usize.saturating_sub(counters_start)) / 2;
-    let num_counters = max_counters.min(MAX_NUMBER_OF_CONTRACTS);
-    for i in 0..num_counters {
-        let offset = counters_start + i * 2;
-        if offset + 2 <= 1708 {
-            contract_counters.push(u16::from_le_bytes([payload[offset], payload[offset + 1]]));
-        }
-    }
-
-    // Signature count: computors whose vote signatures are present
-    // In the broadcast, signatures are appended after the tick data
-    // For now, compute from remaining payload after the fixed fields
+    // --- Signature count from appended signatures after the 1708-byte header ---
     let sig_area_start = 1708;
-    let sig_count = if payload.len() > sig_area_start {
-        (payload.len() - sig_area_start) / SIGNATURE_SIZE
+    let signature_count = if payload.len() > sig_area_start {
+        ((payload.len() - sig_area_start) / SIGNATURE_SIZE) as u32
     } else {
         0
     };
@@ -74,9 +71,11 @@ pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
         salted_spectrum_hash,
         salted_universe_hash,
         salted_computor_hash,
-        transaction_count,
-        contract_counters,
-        signature_count: sig_count as u32,
+        number_of_transactions,
+        number_of_special_events,
+        transaction_count: number_of_transactions as u16,
+        contract_counters: Vec::new(),
+        signature_count,
     })
 }
 

@@ -3,6 +3,7 @@
 //! Serves the public API that dApps and clients use to query indexed data.
 //! Compatible with Bob JSON-RPC methods as a superset.
 
+pub mod metrics;
 pub mod rpc;
 pub mod rest;
 pub mod ws;

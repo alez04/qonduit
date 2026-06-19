@@ -41,6 +41,7 @@ async fn handle_rpc(
     State(state): State<Arc<AppState>>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
+    crate::metrics::RPC_REQUESTS.inc();
     let id = request.id.clone();
     let result = dispatch_method(&state, &request.method, request.params.as_ref()).await;
     match result {
