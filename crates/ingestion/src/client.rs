@@ -93,7 +93,6 @@ impl IngestionHandle {
 /// marking successes and failures as it goes.
 pub struct IngestionClient {
     config: IngestionConfig,
-    nats: NatsClient,
     decoder: PacketDecoder,
     peer_manager: Arc<PeerManager>,
     current_epoch: u16,
@@ -114,24 +113,7 @@ impl IngestionClient {
 
         Self {
             config,
-            nats,
-            decoder: PacketDecoder::new(),
-            peer_manager,
-            current_epoch: 0,
-            current_tick: 0,
-        }
-    }
-
-    /// Create a client with an externally-provided PeerManager.
-    pub fn with_peer_manager(
-        config: IngestionConfig,
-        nats: NatsClient,
-        peer_manager: Arc<PeerManager>,
-    ) -> Self {
-        Self {
-            config,
-            nats,
-            decoder: PacketDecoder::new(),
+            decoder: PacketDecoder::new(nats),
             peer_manager,
             current_epoch: 0,
             current_tick: 0,
@@ -321,7 +303,7 @@ impl IngestionClient {
 
                             if let Err(e) = self
                                 .decoder
-                                .decode_and_publish(msg_type, dejavu, &payload, &self.nats)
+                                .decode_and_publish(msg_type, dejavu, &payload, self.current_epoch)
                                 .await
                             {
                                 warn!("Decode/publish error for type {msg_type}: {e:#}");
