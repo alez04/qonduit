@@ -7,12 +7,6 @@ services:
       - "8222:8222"   # HTTP monitoring
     volumes:
       - nats-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 8222 || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
 
   qonduit:
     build: .
@@ -26,8 +20,7 @@ services:
     volumes:
       - qonduit-data:/data
     depends_on:
-      nats:
-        condition: service_healthy
+      - nats
     restart: unless-stopped
 
 volumes:
