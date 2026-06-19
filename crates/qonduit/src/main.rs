@@ -96,6 +96,7 @@ fn default_listen_addr() -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[derive(Default)]
 struct IngestionConfig {
     #[serde(default)]
     node_addr: Option<String>,
@@ -103,14 +104,6 @@ struct IngestionConfig {
     bootstrap_addrs: Vec<String>,
 }
 
-impl Default for IngestionConfig {
-    fn default() -> Self {
-        Self {
-            node_addr: None, // peer discovery handles finding nodes automatically
-            bootstrap_addrs: Vec::new(),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Main

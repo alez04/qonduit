@@ -4,7 +4,7 @@
 //! Each stream has a subject pattern like `Q.{epoch}.QONDUIT.*` and stores
 //! data with sensible retention defaults.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_nats::jetstream;
 use async_nats::Client;
 use tracing::{debug, info, warn};

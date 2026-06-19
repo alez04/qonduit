@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_nats::Client as NatsClient;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
