@@ -61,8 +61,12 @@ main() {
         echo "Fetching latest release..."
         VERSION="$(get_latest_version)"
         if [[ -z "$VERSION" ]]; then
-            echo "Error: could not determine latest version" >&2
-            echo "Make sure a release exists at https://github.com/${REPO}/releases" >&2
+            echo "Error: no releases found at https://github.com/${REPO}/releases" >&2
+            echo "" >&2
+            echo "No prebuilt binaries available yet. You can:" >&2
+            echo "  1. Build from source:" >&2
+            echo "     git clone https://github.com/${REPO}.git && cd qonduit && cargo build --release" >&2
+            echo "  2. Wait for a release to be published" >&2
             exit 1
         fi
     fi
