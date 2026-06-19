@@ -3,17 +3,18 @@ version: "3.8"
 services:
   nats:
     image: nats:2.10-alpine
-    command: "--jetstream --store_dir /data"
+    command: ["--jetstream", "--store_dir", "/data"]
     ports:
       - "4222:4222"   # Client connections
       - "8222:8222"   # HTTP monitoring
     volumes:
       - nats-data:/data
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8222/healthz || exit 1"]
       interval: 5s
-      timeout: 3s
-      retries: 5
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   qonduit:
     build: .
