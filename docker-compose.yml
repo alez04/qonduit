@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: "--jetstream --store_dir /data"
+    ports:
+      - "4222:4222"   # Client connections
+      - "8222:8222"   # HTTP monitoring
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  qonduit:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - QONDUIT_NATS_URL=nats://nats:4222
+      - QONDUIT_LISTEN_ADDR=0.0.0.0:8080
+      - QONDUIT_NODE_ADDR=host.docker.internal:21841
+      - QONDUIT_DATA_DIR=/data
+    volumes:
+      - qonduit-data:/data
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  nats-data:
+  qonduit-data:

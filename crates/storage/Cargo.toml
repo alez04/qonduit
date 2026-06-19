@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Storage engine: hot tier (RAM), warm tier (RocksDB), cold tier (Parquet)"
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 qonduit-core = { path = "../core" }
 tokio = { workspace = true }
@@ -13,3 +16,5 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
+arrow = { workspace = true }
+parquet = { workspace = true }

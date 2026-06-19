@@ -63,7 +63,7 @@ fn json_or_404(data: Option<Vec<u8>>) -> Response {
 // --- Handlers ---
 
 async fn health() -> impl IntoResponse {
-    StatusCode::OK
+    Json(serde_json::json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
 }
 
 async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {

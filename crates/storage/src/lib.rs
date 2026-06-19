@@ -4,8 +4,10 @@
 //! The warm tier stores the canonical index using RocksDB with column families
 //! for different entity types.
 
+pub mod cold;
 pub mod hot;
 pub mod warm;
 
+pub use cold::ColdStorage;
 pub use hot::HotCache;
 pub use warm::WarmStorage;

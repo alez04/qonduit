@@ -6,9 +6,12 @@ description = "Event processor: consumes from NATS, builds derived indexes in Ro
 
 [dependencies]
 qonduit-core = { path = "../core" }
+qonduit-storage = { path = "../storage" }
 tokio = { workspace = true }
 async-nats = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }

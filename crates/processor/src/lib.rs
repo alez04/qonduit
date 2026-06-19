@@ -1,9 +1,17 @@
 //! Event processor: consumes events from NATS JetStream, builds derived
 //! indexes in the warm tier (RocksDB).
 
+pub mod consumer;
+pub mod indexer;
+
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_nats::Client as NatsClient;
 use tracing::info;
+
+use consumer::Consumer;
+use indexer::Indexer;
 
 /// Configuration for the processor.
 #[derive(Debug, Clone)]
@@ -21,14 +29,14 @@ impl Default for ProcessorConfig {
 }
 
 /// Runs the processor, consuming from NATS and indexing into storage.
-pub async fn run(config: ProcessorConfig, _nats: NatsClient) -> Result<()> {
+pub async fn run(
+    config: ProcessorConfig,
+    nats: NatsClient,
+    storage: Arc<qonduit_storage::WarmStorage>,
+) -> Result<()> {
     info!("Starting processor (group: {})...", config.consumer_group);
 
-    // TODO: Create JetStream consumers for each stream
-    // TODO: Process events and build indexes
-
-    // Keep the task alive
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
+    let indexer = Indexer::new(storage);
+    let consumer = Consumer::new(nats, indexer);
+    consumer.run().await
 }

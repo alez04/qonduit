@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config
-    let config: Config = if cli.config.exists() {
+    let mut config: Config = if cli.config.exists() {
         let contents = std::fs::read_to_string(&cli.config)
             .with_context(|| format!("Failed to read config: {:?}", cli.config))?;
         toml::from_str(&contents).context("Failed to parse config")?
@@ -127,6 +127,20 @@ async fn main() -> Result<()> {
         info!("No config file found, using defaults");
         Config::default()
     };
+
+    // Env var overrides
+    if let Ok(nats_url) = std::env::var("QONDUIT_NATS_URL") {
+        config.nats.url = nats_url;
+    }
+    if let Ok(listen) = std::env::var("QONDUIT_LISTEN_ADDR") {
+        config.query.listen_addr = listen;
+    }
+    if let Ok(node) = std::env::var("QONDUIT_NODE_ADDR") {
+        config.ingestion.node_addr = node;
+    }
+    if let Ok(data) = std::env::var("QONDUIT_DATA_DIR") {
+        config.storage.data_dir = PathBuf::from(data);
+    }
 
     info!("Qonduit starting...");
     info!("  NATS: {}", config.nats.url);
