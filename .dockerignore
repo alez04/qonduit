@@ -1,6 +1,7 @@
 target/
-data/
-planning/
 .git/
+.github/
 *.md
-!README.md
+install.sh
+docker-compose.yml
+docker/
