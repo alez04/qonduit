@@ -1,11 +1,15 @@
 # Stage 1: Build
 FROM rust:1.96-bookworm AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake libclang-dev pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-# Build release binary
+# Build release binary (Cargo.lock will be generated)
 RUN cargo build --release --bin qonduit
 
 # Stage 2: Runtime
