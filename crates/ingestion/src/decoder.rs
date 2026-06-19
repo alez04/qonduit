@@ -8,6 +8,7 @@ use async_nats::Client as NatsClient;
 use tracing::{debug, warn};
 
 use crate::decoders;
+use crate::metrics::{PACKETS_BY_TYPE, PACKETS_PUBLISHED, PACKETS_RECEIVED};
 
 /// Decodes raw TCP packets and publishes to NATS.
 pub struct PacketDecoder {
@@ -34,6 +35,11 @@ impl PacketDecoder {
         payload: &[u8],
         nats: &NatsClient,
     ) -> Result<()> {
+        PACKETS_RECEIVED.inc();
+        PACKETS_BY_TYPE
+            .with_label_values(&[&msg_type.to_string()])
+            .inc();
+
         match msg_type {
             // BroadcastTickVote (type 3) — individual computor vote
             3 => {
@@ -85,6 +91,7 @@ impl PacketDecoder {
                 debug!("Unhandled message type: {msg_type}");
             }
         }
+        PACKETS_PUBLISHED.inc();
         Ok(())
     }
 

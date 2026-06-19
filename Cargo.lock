@@ -2014,6 +2014,8 @@ dependencies = [
  "async-nats",
  "bytes",
  "hex",
+ "once_cell",
+ "prometheus",
  "qonduit-core",
  "rand 0.8.6",
  "reqwest",

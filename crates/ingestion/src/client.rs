@@ -15,6 +15,7 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
 use crate::decoder::PacketDecoder;
+use crate::metrics::{self, PACKETS_DECODE_ERRORS, PEER_COUNT};
 use crate::peer_manager::PeerManager;
 use crate::protocol;
 
@@ -245,6 +246,7 @@ impl IngestionClient {
             // Mark the peer as healthy immediately after successful handshake.
             self.peer_manager.mark_success(&addr).await;
             info!("Connected and authenticated with {addr}");
+            PEER_COUNT.set(self.peer_manager.peer_count().await as i64);
 
             // Request current tick info to bootstrap epoch/tick state.
             match protocol::request_current_tick_info(&mut stream).await {
@@ -259,6 +261,8 @@ impl IngestionClient {
                     info!("Current state: epoch={epoch}, tick={tick}");
                     self.current_epoch = epoch;
                     self.current_tick = tick;
+                    metrics::CURRENT_EPOCH.set(epoch as i64);
+                    metrics::CURRENT_TICK.set(tick as i64);
                 }
                 Ok(data) => {
                     warn!("CurrentTickInfo response too short: {} bytes", data.len());
@@ -304,6 +308,8 @@ impl IngestionClient {
                                     info!("Tick updated: epoch={epoch}, tick={tick}");
                                     self.current_epoch = epoch;
                                     self.current_tick = tick;
+                                    metrics::CURRENT_EPOCH.set(epoch as i64);
+                                    metrics::CURRENT_TICK.set(tick as i64);
                                 }
                                 continue;
                             }
@@ -319,6 +325,7 @@ impl IngestionClient {
                                 .await
                             {
                                 warn!("Decode/publish error for type {msg_type}: {e:#}");
+                                PACKETS_DECODE_ERRORS.inc();
                             }
                         }
                         Err(e) => {

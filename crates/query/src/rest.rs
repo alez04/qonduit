@@ -4,19 +4,23 @@
 //! All return JSON responses.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use axum::{
     Router,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
     Json,
 };
-use serde::Deserialize;
 use qonduit_core::identity;
 
 use crate::AppState;
+
+/// Server start time for uptime tracking.
+static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 /// Build REST routes.
 pub fn routes() -> Router<Arc<AppState>> {
@@ -73,25 +77,43 @@ async fn metrics() -> impl IntoResponse {
 }
 
 async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
+    let start = START_TIME.get_or_init(Instant::now);
+    let uptime_secs = start.elapsed().as_secs();
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": uptime_secs,
+    }))
 }
 
 async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     crate::metrics::REST_REQUESTS.inc();
-    match (
-        state.storage.get_current_tick(),
-        state.storage.get_current_epoch(),
-    ) {
-        (Ok(tick), Ok(epoch)) => {
-            let info = serde_json::json!({
-                "currentTick": tick,
-                "currentEpoch": epoch,
-                "version": env!("CARGO_PKG_VERSION"),
-            });
-            Json(info).into_response()
+    let tick = match state.storage.get_current_tick() {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to read current tick: {e}")})),
+            )
+                .into_response();
         }
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    };
+    let epoch = match state.storage.get_current_epoch() {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to read current epoch: {e}")})),
+            )
+                .into_response();
+        }
+    };
+    let info = serde_json::json!({
+        "currentTick": tick,
+        "currentEpoch": epoch,
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    Json(info).into_response()
 }
 
 async fn current_tick(State(state): State<Arc<AppState>>) -> Response {
@@ -223,18 +245,30 @@ async fn get_issued_assets(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
 async fn get_owned_assets(
     State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-) -> impl IntoResponse {
-    // TODO: Need entity->assets index in storage
-    StatusCode::NOT_IMPLEMENTED
+    Path(id): Path<String>,
+) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
+    let _key = match identity::decode_base26(&id) {
+        Some(k) => k,
+        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+    };
+    // TODO: Need entity->assets index in storage to return actual owned assets.
+    // For now, return an empty array as graceful degradation.
+    Json(serde_json::json!([])).into_response()
 }
 
 async fn get_possessed_assets(
     State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-) -> impl IntoResponse {
-    // TODO: Need entity->assets index in storage
-    StatusCode::NOT_IMPLEMENTED
+    Path(id): Path<String>,
+) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
+    let _key = match identity::decode_base26(&id) {
+        Some(k) => k,
+        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+    };
+    // TODO: Need entity->possessed assets index in storage to return actual possessed assets.
+    // For now, return an empty array as graceful degradation.
+    Json(serde_json::json!([])).into_response()
 }
 
 async fn get_asset(
@@ -284,16 +318,41 @@ async fn get_entity_transactions(
     }
 }
 
-#[derive(Deserialize)]
-struct SearchParams {
-    #[allow(dead_code)]
-    q: Option<String>,
-}
-
 async fn search(
-    State(_state): State<Arc<AppState>>,
-    Query(_params): Query<SearchParams>,
-) -> impl IntoResponse {
-    // TODO: Full-text search index
-    StatusCode::NOT_IMPLEMENTED
+    State(state): State<Arc<AppState>>,
+    Path(query): Path<String>,
+) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
+    let q = query.trim().to_string();
+
+    if q.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Empty search query").into_response();
+    }
+
+    // If it looks like a tick number (all digits), redirect to tick data
+    if q.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(tick) = q.parse::<u32>() {
+            return match state.storage.get_tick(tick) {
+                Ok(data) => json_or_404(data),
+                Err(e) => storage_err(e),
+            };
+        }
+    }
+
+    // If it looks like a hex hash (64 hex chars), redirect to transaction lookup
+    if q.len() == 64 && q.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Ok(bytes) = hex::decode(&q) {
+            if bytes.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                return match state.storage.get_tx(&arr) {
+                    Ok(data) => json_or_404(data),
+                    Err(e) => storage_err(e),
+                };
+            }
+        }
+    }
+
+    // TODO: Full-text search index not yet available; return empty results.
+    Json(serde_json::json!([])).into_response()
 }
