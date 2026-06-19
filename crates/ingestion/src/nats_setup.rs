@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use async_nats::jetstream;
 use async_nats::Client;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// Duration for stream retention: 7 days.
 const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
@@ -94,11 +94,18 @@ pub async fn ensure_streams(nats: &Client) -> Result<()> {
             ..Default::default()
         };
 
-        js.get_or_create_stream(config)
-            .await
-            .with_context(|| format!("Failed to create stream {}", def.name))?;
-
-        info!("JetStream stream {} ensured", def.name);
+        // Try to create stream; if it already exists, that's fine
+        match js.create_stream(config).await {
+            Ok(_) => info!("JetStream stream {} created", def.name),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("stream name already in use") || msg.contains("10058") {
+                    debug!("JetStream stream {} already exists", def.name);
+                } else {
+                    warn!("Failed to create stream {}: {e}", def.name);
+                }
+            }
+        }
     }
 
     info!("All JetStream streams ensured");

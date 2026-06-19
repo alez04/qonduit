@@ -62,13 +62,13 @@ impl Peer {
 
     /// Whether this peer is eligible for pruning.
     fn is_stale(&self) -> bool {
-        let stale_time = match self.last_seen {
+        let last_seen = match self.last_seen {
             Some(t) => t,
-            None => return true, // never connected = stale
+            None => return false, // never tried yet, keep them
         };
         self.failure_count >= PRUNE_FAILURE_THRESHOLD
             && self.success_count == 0
-            && stale_time.elapsed() >= STALE_THRESHOLD
+            && last_seen.elapsed() >= STALE_THRESHOLD
     }
 }
 
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn test_peer_is_stale_never_seen() {
         let peer = Peer::new("127.0.0.1:21841".parse().unwrap());
-        assert!(peer.is_stale());
+        assert!(!peer.is_stale()); // never tried = not stale
     }
 
     #[test]
