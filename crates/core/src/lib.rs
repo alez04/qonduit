@@ -7,6 +7,7 @@
 pub mod constants;
 pub mod error;
 pub mod event;
+pub mod hash;
 pub mod header;
 pub mod identity;
 pub mod message_type;
@@ -15,6 +16,7 @@ pub mod structs;
 pub use constants::*;
 pub use error::QonduitError;
 pub use event::*;
+pub use hash::*;
 pub use header::RequestResponseHeader;
 pub use identity::*;
 pub use message_type::NetworkMessageType;

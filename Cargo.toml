@@ -49,9 +49,14 @@ clap = { version = "4", features = ["derive"] }
 
 # Crypto / protocol
 zerocopy = { version = "0.7", features = ["derive"] }
+sha2 = "0.10"
 
 # Metrics
 prometheus = "0.13"
+
+# Arrow / Parquet
+arrow = "53"
+parquet = { version = "53", features = ["zstd"] }
 
 # Misc
 futures-util = "0.3"

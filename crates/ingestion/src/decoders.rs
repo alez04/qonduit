@@ -124,9 +124,10 @@ pub fn decode_transaction(payload: &[u8]) -> Result<Transaction> {
         String::new()
     };
 
-    // Hash: hex of the transaction header + input (without signature)
+    // Hash: SHA-256 of the transaction header + input (without signature)
     let hash = if payload.len() >= input_end {
-        hex::encode(&payload[..input_end])
+        let tx_hash = qonduit_core::compute_tx_hash(payload, input_size);
+        qonduit_core::hash_to_hex(&tx_hash)
     } else {
         String::new()
     };
