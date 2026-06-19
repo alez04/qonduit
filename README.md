@@ -2,7 +2,7 @@
 
 High-performance Qubic blockchain indexer and RPC server.
 
-Qonduit connects to a Qubic node via TCP, decodes the binary protocol in real-time, indexes all blockchain data into RocksDB, and serves it through a REST API, JSON-RPC 2.0 (Bob-compatible), and WebSocket subscriptions.
+Qonduit connects to a Qubic node via TCP, decodes the binary protocol in real-time, indexes all blockchain data into RocksDB, and serves it through a REST API, JSON-RPC 2.0, and WebSocket subscriptions.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ Qubic Node ─TCP─→ Ingestion ─JSON─→ NATS JetStream ──→ Process
 - **NATS JetStream**: 9 typed event streams, durable consumers, publisher helpers
 - **3-Tier Storage**: Hot (RAM LRU cache) + Warm (RocksDB, 11 column families) + Cold (Parquet export)
 - **REST API**: 17 endpoints for tick, transaction, entity, spectrum, asset, computors, and contract queries
-- **JSON-RPC 2.0**: 27 Bob-compatible methods + 13 Qonduit-native methods
+- **JSON-RPC 2.0**: 40 methods for blockchain queries
 - **WebSocket**: 6 real-time subscription topics (tick, tx, entity, spectrum, custom-message, contract-fn)
 - **Prometheus Metrics**: `/metrics` endpoint with 11 counters and gauges
 - **Graceful Shutdown**: Broadcast channel with 30s timeout across all services
@@ -98,7 +98,7 @@ curl http://localhost:8080/v1/issued-assets
 ### JSON-RPC 2.0
 
 ```bash
-# Bob-compatible
+# JSON-RPC
 curl -X POST http://localhost:8080/rpc \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"getTickInfo","id":1}'
