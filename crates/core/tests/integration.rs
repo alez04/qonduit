@@ -16,7 +16,9 @@ fn test_identity_display() {
     let key = [0u8; 32];
     let id = qonduit_core::identity::encode_base26(&key);
     assert_eq!(id.len(), 60);
-    assert!(id.chars().all(|c| c == 'A'));
+    // Zero public key: first 56 chars are A, last 4 are K12 checksum
+    assert!(id[..56].chars().all(|c| c == 'A'));
+    assert_eq!(&id[56..], "FXIB");
 }
 
 #[test]

@@ -50,6 +50,7 @@ clap = { version = "4", features = ["derive"] }
 # Crypto / protocol
 zerocopy = { version = "0.7", features = ["derive"] }
 sha2 = "0.10"
+kangarootwelve = "0.1"
 
 # Metrics
 prometheus = "0.13"
