@@ -1,0 +1,3 @@
+# Qonduit clippy configuration
+too-many-arguments-threshold = 15
+type-complexity-threshold = 500

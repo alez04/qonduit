@@ -54,6 +54,7 @@ const ALL_CFS: &[&str] = &[
 // ---------------------------------------------------------------------------
 
 /// Warm tier storage backed by RocksDB.
+#[derive(Clone)]
 pub struct WarmStorage {
     db: DB,
 }
