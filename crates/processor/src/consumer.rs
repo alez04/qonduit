@@ -1,8 +1,8 @@
 //! NATS JetStream consumer: subscribes to event streams and dispatches to indexers.
 
 use anyhow::Result;
-use async_nats::jetstream::consumer::PullConsumer;
 use async_nats::jetstream::{self, AckKind};
+use async_nats::jetstream::consumer::PullConsumer;
 use async_nats::Client as NatsClient;
 use futures_util::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -137,6 +137,7 @@ impl Consumer {
                 .fetch()
                 .max_messages(10)
                 .expires(std::time::Duration::from_secs(5))
+                .messages()
                 .await
             {
                 Ok(m) => m,
@@ -153,7 +154,7 @@ impl Consumer {
                         let payload = msg.payload.to_vec();
                         if let Err(e) = handler(payload, indexer.clone()).await {
                             warn!("Handler error on {stream_name}: {e}");
-                            let _ = msg.double_ack(AckKind::Nak(None)).await;
+                            let _ = msg.ack_with(AckKind::Nak(None)).await;
                         } else {
                             let _ = msg.ack().await;
                         }
