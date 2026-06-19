@@ -1,9 +1,12 @@
-//! TCP client: connects to a Qubic node and reads packets from the stream.
+//! TCP client: connects to Qubic nodes via PeerManager and reads packets.
 //!
-//! Implements the initial peer exchange handshake, then enters a read loop
-//! dispatching decoded packets to NATS.
+//! Implements multi-peer failover: the client picks the best peer from the
+//! PeerManager, attempts connection, and on failure marks the peer down and
+//! tries the next one. Successful connections are recorded so the manager
+//! can make better selections over time.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -15,46 +18,133 @@ use tracing::{debug, error, info, warn};
 use qonduit_core::RequestResponseHeader;
 
 use crate::decoder::PacketDecoder;
+use crate::peer_manager::PeerManager;
 use crate::protocol;
+
+/// Maximum number of peers to try per reconnection cycle before giving up
+/// and waiting for the reconnect delay.
+const MAX_PEERS_PER_ATTEMPT: usize = 8;
 
 /// Configuration for the ingestion client.
 #[derive(Debug, Clone)]
 pub struct IngestionConfig {
-    /// Qubic node TCP address.
-    pub node_addr: SocketAddr,
+    /// Optional explicit node address. If provided, it is added to the
+    /// PeerManager as a bootstrap peer.
+    pub node_addr: Option<SocketAddr>,
+    /// Additional bootstrap addresses for peer discovery.
+    pub bootstrap_addrs: Vec<SocketAddr>,
     /// Timeout for TCP operations.
     pub tcp_timeout: Duration,
-    /// Reconnect delay on connection loss.
+    /// Reconnect delay on connection loss (or when all peers fail).
     pub reconnect_delay: Duration,
 }
 
-impl Default for IngestionConfig {
-    fn default() -> Self {
+impl IngestionConfig {
+    /// Create a config targeting a single node address (legacy behaviour).
+    pub fn single(node_addr: SocketAddr) -> Self {
         Self {
-            node_addr: "127.0.0.1:21841".parse().unwrap(),
+            node_addr: Some(node_addr),
+            bootstrap_addrs: Vec::new(),
+            tcp_timeout: Duration::from_secs(30),
+            reconnect_delay: Duration::from_secs(5),
+        }
+    }
+
+    /// Create a config with only bootstrap peers (no explicit node).
+    pub fn with_bootstrap(addrs: Vec<SocketAddr>) -> Self {
+        Self {
+            node_addr: None,
+            bootstrap_addrs: addrs,
             tcp_timeout: Duration::from_secs(30),
             reconnect_delay: Duration::from_secs(5),
         }
     }
 }
 
-/// Ingestion client that reads from a Qubic node and publishes to NATS.
+impl Default for IngestionConfig {
+    fn default() -> Self {
+        Self::single("127.0.0.1:21841".parse().expect("valid default addr"))
+    }
+}
+
+/// Handle to a running ingestion client, exposing live metrics.
+#[derive(Debug, Clone)]
+pub struct IngestionHandle {
+    peer_manager: Arc<PeerManager>,
+}
+
+impl IngestionHandle {
+    /// Number of known peers (healthy + unhealthy).
+    pub async fn peer_count(&self) -> usize {
+        self.peer_manager.peer_count().await
+    }
+
+    /// Return a reference to the underlying PeerManager.
+    pub fn peer_manager(&self) -> &Arc<PeerManager> {
+        &self.peer_manager
+    }
+}
+
+/// Ingestion client that reads from Qubic nodes and publishes to NATS.
+///
+/// Uses a `PeerManager` for peer discovery and health tracking. On each
+/// reconnection cycle the client tries up to `MAX_PEERS_PER_ATTEMPT` peers,
+/// marking successes and failures as it goes.
 pub struct IngestionClient {
     config: IngestionConfig,
     nats: NatsClient,
     decoder: PacketDecoder,
+    peer_manager: Arc<PeerManager>,
     current_epoch: u16,
     current_tick: u32,
 }
 
 impl IngestionClient {
+    /// Create a new client from config and NATS connection.
+    ///
+    /// Builds the `PeerManager` from the config's bootstrap addresses
+    /// and optional explicit `node_addr`.
     pub fn new(config: IngestionConfig, nats: NatsClient) -> Self {
+        // Collect bootstrap addresses: explicit node + any additional bootstraps.
+        let mut bootstrap: Vec<SocketAddr> = config.bootstrap_addrs.clone();
+        if let Some(addr) = config.node_addr {
+            if !bootstrap.contains(&addr) {
+                bootstrap.push(addr);
+            }
+        }
+
+        let peer_manager = Arc::new(PeerManager::new(&bootstrap));
+
         Self {
             config,
             nats,
             decoder: PacketDecoder::new(),
+            peer_manager,
             current_epoch: 0,
             current_tick: 0,
+        }
+    }
+
+    /// Create a client with an externally-provided PeerManager.
+    pub fn with_peer_manager(
+        config: IngestionConfig,
+        nats: NatsClient,
+        peer_manager: Arc<PeerManager>,
+    ) -> Self {
+        Self {
+            config,
+            nats,
+            decoder: PacketDecoder::new(),
+            peer_manager,
+            current_epoch: 0,
+            current_tick: 0,
+        }
+    }
+
+    /// Return a handle for querying live metrics.
+    pub fn handle(&self) -> IngestionHandle {
+        IngestionHandle {
+            peer_manager: Arc::clone(&self.peer_manager),
         }
     }
 
@@ -69,86 +159,172 @@ impl IngestionClient {
     }
 
     /// Run the ingestion loop. Reconnects on failure.
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
+        // Step 1: Attempt to bootstrap from the Qubic discovery API.
+        // This is non-fatal -- if it fails we proceed with static peers.
+        match self.peer_manager.bootstrap_from_api().await {
+            Ok(()) => {
+                info!(
+                    "Bootstrap from API succeeded, {} peers known",
+                    self.peer_manager.peer_count().await
+                );
+            }
+            Err(e) => {
+                warn!("Bootstrap from API failed (non-fatal): {e:#}");
+            }
+        }
+
+        // Step 2: Main reconnection loop.
         loop {
             match self.connect_and_read().await {
                 Ok(()) => {
                     warn!("Connection closed cleanly, reconnecting...");
                 }
                 Err(e) => {
-                    error!("Ingestion error: {e:#}");
+                    error!("Ingestion cycle error: {e:#}");
                 }
             }
 
+            // Periodically prune stale peers.
+            self.peer_manager.prune_stale().await;
+
             info!(
-                "Reconnecting in {}s...",
-                self.config.reconnect_delay.as_secs()
+                "Reconnecting in {}s... ({} peers known)",
+                self.config.reconnect_delay.as_secs(),
+                self.peer_manager.peer_count().await,
             );
             tokio::time::sleep(self.config.reconnect_delay).await;
         }
     }
 
-    /// Connect to the node and enter the packet read loop.
-    async fn connect_and_read(&self) -> Result<()> {
-        info!("Connecting to {}...", self.config.node_addr);
+    /// Try to connect to peers, perform handshake, and enter the read loop.
+    ///
+    /// Iterates through up to `MAX_PEERS_PER_ATTEMPT` peers before returning
+    /// an error to let the outer loop apply the reconnect delay.
+    async fn connect_and_read(&mut self) -> Result<()> {
+        let mut attempts = 0usize;
 
-        let mut stream = tokio::time::timeout(
-            self.config.tcp_timeout,
-            TcpStream::connect(self.config.node_addr),
-        )
-        .await
-        .context("TCP connect timeout")?
-        .context("TCP connect failed")?;
+        while attempts < MAX_PEERS_PER_ATTEMPT {
+            // Pick the best peer from the manager.
+            let addr = match self.peer_manager.best_peer().await {
+                Some(a) => a,
+                None => {
+                    if attempts == 0 {
+                        anyhow::bail!("No peers available for connection");
+                    }
+                    warn!("No more peers to try after {attempts} attempts");
+                    anyhow::bail!(
+                        "Exhausted all peer candidates ({attempts} attempted)"
+                    );
+                }
+            };
 
-        info!("Connected to {}", self.config.node_addr);
-
-        // Exchange public peers (handshake)
-        let local_peers: [[u8; 4]; 4] = [[127, 0, 0, 1]; 4];
-        match protocol::exchange_public_peers(&mut stream, &local_peers).await {
-            Ok(peers) => {
-                info!("Peer exchange complete, received {} peer entries", peers.len());
-            }
-            Err(e) => {
-                warn!("Peer exchange failed: {e:#}");
-            }
-        }
-
-        // Request current tick info to bootstrap epoch/tick state
-        match protocol::request_current_tick_info(&mut stream).await {
-            Ok(data) if data.len() >= 6 => {
-                let epoch = u16::from_le_bytes([data[0], data[1]]);
-                let tick = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
-                info!("Current state: epoch={epoch}, tick={tick}");
-                // Store in client (requires &mut self for connect_and_read)
-                // For now we log; mutation will be wired once run() takes &mut self.
-                let _ = (epoch, tick);
-            }
-            Ok(data) => {
-                warn!("CurrentTickInfo response too short: {} bytes", data.len());
-            }
-            Err(e) => {
-                warn!("Failed to request current tick info: {e:#}");
-            }
-        }
-
-        // Read loop
-        loop {
-            let (msg_type, dejavu, payload) =
-                self.read_packet(&mut stream).await?;
-
-            debug!(
-                "Packet: type={msg_type}, dejavu={dejavu}, payload_len={}",
-                payload.len()
+            attempts += 1;
+            info!(
+                "Connecting to {addr} (attempt {attempts}/{MAX_PEERS_PER_ATTEMPT})..."
             );
 
-            // Decode and publish
-            if let Err(e) = self.decoder.decode_and_publish(
-                msg_type,
-                dejavu,
-                &payload,
-                &self.nats,
-            ).await {
-                warn!("Decode/publish error for type {msg_type}: {e:#}");
+            // Attempt TCP connection.
+            let mut stream = match tokio::time::timeout(
+                self.config.tcp_timeout,
+                TcpStream::connect(addr),
+            )
+            .await
+            {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    warn!("TCP connect to {addr} failed: {e:#}");
+                    self.peer_manager.mark_failure(&addr).await;
+                    continue;
+                }
+                Err(_) => {
+                    warn!("TCP connect to {addr} timed out");
+                    self.peer_manager.mark_failure(&addr).await;
+                    continue;
+                }
+            };
+
+            // Peer exchange handshake.
+            let local_peers: [[u8; 4]; 4] = [[127, 0, 0, 1]; 4];
+            match protocol::exchange_public_peers(&mut stream, &local_peers).await {
+                Ok(peers) => {
+                    info!(
+                        "Peer exchange complete with {addr}, received {} peer entries",
+                        peers.len()
+                    );
+                    // Feed discovered peers back into the manager.
+                    self.peer_manager
+                        .add_peers_from_exchange(&peers)
+                        .await;
+                }
+                Err(e) => {
+                    warn!("Peer exchange with {addr} failed: {e:#}");
+                    self.peer_manager.mark_failure(&addr).await;
+                    continue;
+                }
+            }
+
+            // Mark the peer as healthy.
+            self.peer_manager.mark_success(&addr).await;
+            info!("Connected and authenticated with {addr}");
+
+            // Request current tick info to bootstrap epoch/tick state.
+            match protocol::request_current_tick_info(&mut stream).await {
+                Ok(data) if data.len() >= 6 => {
+                    let epoch = u16::from_le_bytes([data[0], data[1]]);
+                    let tick =
+                        u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
+                    info!("Current state: epoch={epoch}, tick={tick}");
+                    self.current_epoch = epoch;
+                    self.current_tick = tick;
+                }
+                Ok(data) => {
+                    warn!(
+                        "CurrentTickInfo response too short: {} bytes",
+                        data.len()
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to request current tick info: {e:#}");
+                }
+            }
+
+            // Read loop -- runs until the connection drops.
+            return self.read_loop(&mut stream, addr).await;
+        }
+
+        anyhow::bail!("Failed to connect after {attempts} peer attempts")
+    }
+
+    /// Read packets from the stream and publish them to NATS.
+    ///
+    /// Returns when the connection is lost or an unrecoverable read error
+    /// occurs. The `addr` is used only for marking failure on abnormal exit.
+    async fn read_loop(
+        &self,
+        stream: &mut TcpStream,
+        addr: SocketAddr,
+    ) -> Result<()> {
+        loop {
+            match self.read_packet(stream).await {
+                Ok((msg_type, dejavu, payload)) => {
+                    debug!(
+                        "Packet: type={msg_type}, dejavu={dejavu}, payload_len={}",
+                        payload.len()
+                    );
+
+                    if let Err(e) = self
+                        .decoder
+                        .decode_and_publish(msg_type, dejavu, &payload, &self.nats)
+                        .await
+                    {
+                        warn!("Decode/publish error for type {msg_type}: {e:#}");
+                    }
+                }
+                Err(e) => {
+                    warn!("Read loop error on {addr}: {e:#}");
+                    return Err(e);
+                }
             }
         }
     }
@@ -158,13 +334,13 @@ impl IngestionClient {
         &self,
         stream: &mut TcpStream,
     ) -> Result<(u8, u32, Vec<u8>)> {
-        // Read 8-byte header
+        // Read 8-byte header.
         let mut header_buf = [0u8; 8];
         self.read_exact_timeout(stream, &mut header_buf)
             .await
             .context("Failed to read header")?;
 
-        // Parse header
+        // Parse header.
         let header =
             unsafe { &*(&header_buf as *const [u8; 8] as *const RequestResponseHeader) };
 
@@ -172,7 +348,7 @@ impl IngestionClient {
         let dejavu = header.dejavu();
         let payload_size = header.payload_size() as usize;
 
-        // Read payload
+        // Read payload.
         let payload = if payload_size > 0 {
             let mut buf = vec![0u8; payload_size];
             self.read_exact_timeout(stream, &mut buf)

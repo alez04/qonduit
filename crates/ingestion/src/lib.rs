@@ -7,7 +7,9 @@ pub mod decoders;
 pub mod nats_publish;
 pub mod nats_setup;
 pub mod pending;
+pub mod peer_manager;
 pub mod protocol;
 
-pub use client::IngestionClient;
+pub use client::{IngestionClient, IngestionHandle};
 pub use nats_publish::NatsPublisher;
+pub use peer_manager::PeerManager;

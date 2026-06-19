@@ -97,14 +97,17 @@ fn default_listen_addr() -> String {
 
 #[derive(Debug, Deserialize)]
 struct IngestionConfig {
-    #[serde(default = "default_node_addr")]
-    node_addr: String,
+    #[serde(default)]
+    node_addr: Option<String>,
+    #[serde(default)]
+    bootstrap_addrs: Vec<String>,
 }
 
 impl Default for IngestionConfig {
     fn default() -> Self {
         Self {
-            node_addr: default_node_addr(),
+            node_addr: Some(default_node_addr()),
+            bootstrap_addrs: Vec::new(),
         }
     }
 }
@@ -146,7 +149,10 @@ async fn main() -> Result<()> {
         config.query.listen_addr = v;
     }
     if let Ok(v) = std::env::var("QONDUIT_NODE_ADDR") {
-        config.ingestion.node_addr = v;
+        config.ingestion.node_addr = Some(v);
+    }
+    if let Ok(v) = std::env::var("QONDUIT_BOOTSTRAP_ADDRS") {
+        config.ingestion.bootstrap_addrs = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     }
     if let Ok(v) = std::env::var("QONDUIT_DATA_DIR") {
         config.storage.data_dir = PathBuf::from(v);
@@ -156,7 +162,9 @@ async fn main() -> Result<()> {
     info!("  NATS: {}", config.nats.url);
     info!("  Storage: {:?}", config.storage.data_dir);
     info!("  Query: {}", config.query.listen_addr);
-    info!("  Node: {}", config.ingestion.node_addr);
+    let node_str = config.ingestion.node_addr.as_deref().unwrap_or("");
+    info!("  Node: {}", if node_str.is_empty() { "(none - query-only)" } else { node_str });
+    info!("  Bootstrap: {:?}", config.ingestion.bootstrap_addrs);
 
     // --- Phase 1: Storage (warm tier + hot cache) ---
     let warm_storage = qonduit_storage::WarmStorage::open(&config.storage.data_dir)
@@ -242,40 +250,56 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Ingestion client (optional — skip if no node address configured)
-    let ingestion_handle = if config.ingestion.node_addr.is_empty() {
-        info!("No node address configured, skipping ingestion (query-only mode)");
+    // Ingestion client (optional — skip if no node address AND no bootstrap addrs configured)
+    let should_run_ingestion = config.ingestion.node_addr.is_some()
+        || !config.ingestion.bootstrap_addrs.is_empty();
+    let ingestion_handle = if !should_run_ingestion {
+        info!("No node address or bootstrap addrs configured, skipping ingestion (query-only mode)");
         None
     } else {
-        match config.ingestion.node_addr.parse::<std::net::SocketAddr>() {
-            Ok(addr) => {
-                let nats = nats.clone();
-                Some(tokio::spawn(async move {
-                    let client = qonduit_ingestion::IngestionClient::new(
-                        qonduit_ingestion::client::IngestionConfig {
-                            node_addr: addr,
-                            tcp_timeout: Duration::from_secs(30),
-                            reconnect_delay: Duration::from_secs(5),
-                        },
-                        nats,
-                    );
-                    tokio::select! {
-                        result = client.run() => {
-                            if let Err(e) = result {
-                                tracing::error!("Ingestion error: {e:#}");
-                            }
-                        }
-                        _ = ingestion_stop_rx.changed() => {
-                            info!("Ingestion shutting down");
-                        }
-                    }
-                }))
-            }
-            Err(e) => {
-                tracing::warn!("Invalid node address '{}', skipping ingestion: {e}", config.ingestion.node_addr);
-                None
+        // Build ingestion config
+        let mut ingestion_config = qonduit_ingestion::client::IngestionConfig {
+            node_addr: None,
+            bootstrap_addrs: Vec::new(),
+            tcp_timeout: Duration::from_secs(30),
+            reconnect_delay: Duration::from_secs(5),
+        };
+
+        if let Some(ref node_str) = config.ingestion.node_addr {
+            match node_str.parse::<std::net::SocketAddr>() {
+                Ok(addr) => ingestion_config.node_addr = Some(addr),
+                Err(e) => {
+                    tracing::warn!("Invalid node address '{node_str}', ignoring: {e}");
+                }
             }
         }
+
+        for bs in &config.ingestion.bootstrap_addrs {
+            match bs.parse::<std::net::SocketAddr>() {
+                Ok(addr) => ingestion_config.bootstrap_addrs.push(addr),
+                Err(e) => {
+                    tracing::warn!("Invalid bootstrap address '{bs}', ignoring: {e}");
+                }
+            }
+        }
+
+        let nats = nats.clone();
+        Some(tokio::spawn(async move {
+            let mut client = qonduit_ingestion::IngestionClient::new(
+                ingestion_config,
+                nats,
+            );
+            tokio::select! {
+                result = client.run() => {
+                    if let Err(e) = result {
+                        tracing::error!("Ingestion error: {e:#}");
+                    }
+                }
+                _ = ingestion_stop_rx.changed() => {
+                    info!("Ingestion shutting down");
+                }
+            }
+        }))
     };
 
     info!("Qonduit is running — all services started");
