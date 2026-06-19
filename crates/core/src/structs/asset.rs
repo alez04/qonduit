@@ -1,7 +1,7 @@
-/// Asset structs (issued, owned, possessed).
-///
-/// Each asset packet is a single `AssetRecord`.
-/// Sizes: issued=824, owned=872, possessed=920 bytes (including header).
+//! Asset structs (issued, owned, possessed).
+//!
+//! Each asset packet is a single `AssetRecord`.
+//! Sizes: issued=824, owned=872, possessed=920 bytes (including header).
 
 use serde::{Deserialize, Serialize};
 

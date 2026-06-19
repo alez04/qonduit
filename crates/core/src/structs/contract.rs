@@ -1,6 +1,6 @@
-/// Contract IPO bid data.
-///
-/// Packet size: 8 + 676*32 + 64 = 21672 bytes.
+//! Contract IPO bid data.
+//!
+//! Packet size: 8 + 676*32 + 64 = 21672 bytes.
 
 use serde::{Deserialize, Serialize};
 

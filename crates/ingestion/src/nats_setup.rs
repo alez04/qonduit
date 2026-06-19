@@ -19,8 +19,6 @@ const MAX_BYTES: i64 = 10 * 1024 * 1024 * 1024;
 struct StreamDef {
     name: &'static str,
     subjects: Vec<&'static str>,
-    /// If true, retain only the last message per subject.
-    retain_last_per_subject: bool,
 }
 
 /// All Qonduit JetStream streams.
@@ -29,47 +27,47 @@ fn stream_definitions() -> Vec<StreamDef> {
         StreamDef {
             name: "QONDUIT_TICKS",
             subjects: vec!["Q.>.QONDUIT.TICK"],
-            retain_last_per_subject: true,
+
         },
         StreamDef {
             name: "QONDUIT_TX",
             subjects: vec!["Q.>.QONDUIT.TX"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_ENTITIES",
             subjects: vec!["Q.>.QONDUIT.ENTITY"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_SPECTRUM",
             subjects: vec!["Q.>.QONDUIT.SPECTRUM"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_COMPUTORS",
             subjects: vec!["Q.>.QONDUIT.COMPUTORS"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_CUSTMSG",
             subjects: vec!["Q.>.QONDUIT.CUSTMSG"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_ORACLE",
             subjects: vec!["Q.>.QONDUIT.ORACLE"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_ASSETS",
             subjects: vec!["Q.>.QONDUIT.ASSET"],
-            retain_last_per_subject: false,
+
         },
         StreamDef {
             name: "QONDUIT_CONTRACTS",
             subjects: vec!["Q.>.QONDUIT.CONTRACT", "Q.>.QONDUIT.CFNR"],
-            retain_last_per_subject: false,
+
         },
     ]
 }
@@ -92,11 +90,7 @@ pub async fn ensure_streams(nats: &Client) -> Result<()> {
             num_replicas: 1,
             discard: jetstream::stream::DiscardPolicy::Old,
             // retain last value per subject for tick stream
-            retention: if def.retain_last_per_subject {
-                jetstream::stream::RetentionPolicy::Limits
-            } else {
-                jetstream::stream::RetentionPolicy::Limits
-            },
+            retention: jetstream::stream::RetentionPolicy::Limits,
             ..Default::default()
         };
 

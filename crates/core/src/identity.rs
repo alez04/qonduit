@@ -1,7 +1,7 @@
-/// Qubic identity encoding (base-26, bidirectional).
-///
-/// An identity is a 56-char base-26 uppercase string (A..Z),
-/// typically representing a public key or address.
+//! Qubic identity encoding (base-26, bidirectional).
+//!
+//! An identity is a 56-char base-26 uppercase string (A..Z),
+//! typically representing a public key or address.
 
 use std::fmt;
 
@@ -49,9 +49,9 @@ pub fn encode_base26(bytes: &[u8; PUBLIC_KEY_SIZE]) -> String {
     // Repeatedly divide by 26, collecting remainders
     loop {
         let mut remainder: u32 = 0;
-        for i in 0..number.len() {
-            let val = remainder * 256 + number[i] as u32;
-            number[i] = (val / 26) as u8;
+        for item in &mut number {
+            let val = remainder * 256 + *item as u32;
+            *item = (val / 26) as u8;
             remainder = val % 26;
         }
         chars.push((b'A' + remainder as u8) as char);

@@ -1,7 +1,7 @@
-/// System info response from RespondSystemInfo (type 47).
-///
-/// Packet size: 152 bytes total (8 + 144 payload).
-/// Layout matches C++ SystemInfoReply.
+//! System info response from RespondSystemInfo (type 47).
+//!
+//! Packet size: 152 bytes total (8 + 144 payload).
+//! Layout matches C++ SystemInfoReply.
 
 use serde::{Deserialize, Serialize};
 

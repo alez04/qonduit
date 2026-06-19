@@ -133,7 +133,7 @@ async fn handle_ws_subscription(
             warn!("Failed to subscribe to {subject}: {e}");
             let _ = socket
                 .send(Message::Text(
-                    format!("{{\"error\": \"subscribe failed: {e}\"}}").into(),
+                    format!("{{\"error\": \"subscribe failed: {e}\"}}"),
                 ))
                 .await;
             return;
@@ -144,8 +144,7 @@ async fn handle_ws_subscription(
     let _ = socket
         .send(Message::Text(
             serde_json::json!({"status": "connected", "subject": subject})
-                .to_string()
-                .into(),
+                .to_string(),
         ))
         .await;
 
@@ -159,7 +158,7 @@ async fn handle_ws_subscription(
                     Some(msg) => {
                         let payload = String::from_utf8_lossy(&msg.payload);
                         if socket
-                            .send(Message::Text(payload.to_string().into()))
+                            .send(Message::Text(payload.to_string()))
                             .await
                             .is_err()
                         {

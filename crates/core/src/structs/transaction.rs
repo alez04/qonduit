@@ -1,7 +1,7 @@
-/// Transaction and input structs from `structures.h`.
-///
-/// A transaction is 80 bytes header + up to 1024 bytes payload + 64 bytes signature.
-/// Max transaction size: 1168 bytes.
+//! Transaction and input structs from `structures.h`.
+//!
+//! A transaction is 80 bytes header + up to 1024 bytes payload + 64 bytes signature.
+//! Max transaction size: 1168 bytes.
 
 use serde::{Deserialize, Serialize};
 

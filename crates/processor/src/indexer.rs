@@ -33,7 +33,7 @@ impl Indexer {
 
         // Update current tick if newer
         if let Ok(current) = self.storage.get_current_tick() {
-            if current.map_or(true, |c| tick.tick > c) {
+            if current.is_none_or(|c| tick.tick > c) {
                 self.storage.set_current_tick(tick.tick)?;
             }
         }

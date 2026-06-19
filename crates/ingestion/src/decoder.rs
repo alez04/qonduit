@@ -15,6 +15,12 @@ pub struct PacketDecoder {
     _current_epoch: u16,
 }
 
+impl Default for PacketDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PacketDecoder {
     pub fn new() -> Self {
         Self { _current_epoch: 0 }

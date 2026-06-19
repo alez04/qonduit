@@ -176,7 +176,7 @@ pub fn decode_computors(payload: &[u8]) -> Result<Computors> {
         }
     }
 
-    let public_key_identities: Vec<String> = public_keys.iter().map(|k| encode_base26(k)).collect();
+    let public_key_identities: Vec<String> = public_keys.iter().map(encode_base26).collect();
 
     Ok(Computors {
         epoch,

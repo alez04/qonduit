@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 pub static REGISTRY: OnceLock<Registry> = OnceLock::new();
 
 fn registry() -> &'static Registry {
-    REGISTRY.get_or_init(|| Registry::new())
+    REGISTRY.get_or_init(Registry::new)
 }
 
 // --- Counters ---

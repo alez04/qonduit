@@ -89,10 +89,10 @@ pub async fn exchange_public_peers(
 
     // Parse 4 IPv4 addresses
     let mut peers = [[0u8; 4]; 4];
-    for i in 0..4 {
+    for (i, peer) in peers.iter_mut().enumerate() {
         let start = i * 4;
         if start + 4 <= resp_payload.len() {
-            peers[i].copy_from_slice(&resp_payload[start..start + 4]);
+            peer.copy_from_slice(&resp_payload[start..start + 4]);
         }
     }
 

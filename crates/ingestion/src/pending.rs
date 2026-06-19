@@ -16,6 +16,12 @@ pub struct PendingRequests {
     map: Arc<Mutex<HashMap<u32, ResponseSender>>>,
 }
 
+impl Default for PendingRequests {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PendingRequests {
     pub fn new() -> Self {
         Self {

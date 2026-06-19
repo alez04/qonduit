@@ -1,6 +1,6 @@
-/// Qubic protocol constants from `common_def.h` and `public_settings.h`.
-///
-/// All values verified against the C++ core source.
+//! Qubic protocol constants from `common_def.h` and `public_settings.h`.
+//!
+//! All values verified against the C++ core source.
 
 /// Number of computors (26^2).
 pub const NUMBER_OF_COMPUTORS: usize = 676;
