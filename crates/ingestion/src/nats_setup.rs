@@ -1,8 +1,7 @@
 //! NATS JetStream stream management.
 //!
 //! Creates all required JetStreams for the Qonduit pipeline if they don't already exist.
-//! Each stream has a subject pattern like `Q.{epoch}.QONDUIT.*` and stores
-//! data with sensible retention defaults.
+//! Each stream captures messages from the corresponding `QONDUIT.*` subject.
 
 use anyhow::Result;
 use async_nats::jetstream;
@@ -25,20 +24,16 @@ struct StreamDef {
 fn stream_definitions() -> Vec<StreamDef> {
     vec![
         StreamDef {
-            name: "QONDUIT_TICKS",
-            subjects: vec!["QONDUIT.TICKS"],
+            name: "QONDUIT_TICK",
+            subjects: vec!["QONDUIT.TICK"],
         },
         StreamDef {
             name: "QONDUIT_TX",
             subjects: vec!["QONDUIT.TX"],
         },
         StreamDef {
-            name: "QONDUIT_ENTITIES",
-            subjects: vec!["QONDUIT.ENTITIES"],
-        },
-        StreamDef {
-            name: "QONDUIT_SPECTRUM",
-            subjects: vec!["QONDUIT.SPECTRUM"],
+            name: "QONDUIT_ENTITY",
+            subjects: vec!["QONDUIT.ENTITY"],
         },
         StreamDef {
             name: "QONDUIT_COMPUTORS",
@@ -53,12 +48,20 @@ fn stream_definitions() -> Vec<StreamDef> {
             subjects: vec!["QONDUIT.ORACLE"],
         },
         StreamDef {
-            name: "QONDUIT_ASSETS",
-            subjects: vec!["QONDUIT.ASSETS"],
+            name: "QONDUIT_ASSET",
+            subjects: vec!["QONDUIT.ASSET"],
         },
         StreamDef {
-            name: "QONDUIT_CONTRACTS",
-            subjects: vec!["QONDUIT.CONTRACTS"],
+            name: "QONDUIT_CONTRACT",
+            subjects: vec!["QONDUIT.CONTRACT"],
+        },
+        StreamDef {
+            name: "QONDUIT_TICKVOTE",
+            subjects: vec!["QONDUIT.TICKVOTE"],
+        },
+        StreamDef {
+            name: "QONDUIT_CFNR",
+            subjects: vec!["QONDUIT.CFNR"],
         },
     ]
 }
