@@ -7,15 +7,20 @@ use anyhow::Result;
 use async_nats::Client as NatsClient;
 use tracing::{debug, warn};
 
+use crate::nats_publish::NatsPublisher;
+
 /// Decodes raw TCP packets and publishes to NATS.
 pub struct PacketDecoder {
-    // Placeholder for epoch tracking
+    publisher: NatsPublisher,
     _current_epoch: u16,
 }
 
 impl PacketDecoder {
-    pub fn new() -> Self {
-        Self { _current_epoch: 0 }
+    pub fn new(publisher: NatsPublisher) -> Self {
+        Self {
+            publisher,
+            _current_epoch: 0,
+        }
     }
 
     /// Decode a packet and publish to the appropriate NATS subject.
@@ -81,9 +86,43 @@ impl PacketDecoder {
             anyhow::bail!("Tick payload too small: {} < 1708", payload.len());
         }
         let epoch = u16::from_le_bytes([payload[0], payload[1]]);
-        let tick = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
-        debug!("Tick: epoch={epoch}, tick={tick}");
-        // TODO: Full tick decode + publish to NATS
+        let tick_num = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
+        let timestamp = u64::from_le_bytes(payload[4112..4120].try_into().unwrap());
+        let time_lock: [u8; 32] = payload[4120..4152].try_into().unwrap();
+        let mining_nonce = u32::from_le_bytes(payload[8248..8252].try_into().unwrap());
+        let salted_spectrum_hash: [u8; 32] = payload[6200..6232].try_into().unwrap();
+        let salted_universe_hash: [u8; 32] = payload[6232..6264].try_into().unwrap();
+        let salted_computor_hash: [u8; 32] = payload[6264..6296].try_into().unwrap();
+
+        // Count signatures (non-zero 64-byte blocks)
+        let mut signature_count = 0u32;
+        for i in 0..676 {
+            let offset = 6 + i * 64;
+            let sig = &payload[offset..offset + 64];
+            if sig.iter().any(|&b| b != 0) {
+                signature_count += 1;
+            }
+        }
+
+        // Total transaction count from first slot
+        let transaction_count = u16::from_le_bytes([payload[4152], payload[4153]]);
+
+        let tick_data = qonduit_core::TickData {
+            epoch,
+            tick: tick_num,
+            timestamp,
+            time_lock,
+            mining_nonce,
+            salted_spectrum_hash,
+            salted_universe_hash,
+            salted_computor_hash,
+            transaction_count,
+            contract_counters: Vec::new(),
+            signature_count,
+        };
+
+        self.publisher.publish_tick(epoch, &tick_data).await?;
+        debug!("Tick: epoch={epoch}, tick={tick_num}");
         Ok(())
     }
 
@@ -99,7 +138,23 @@ impl PacketDecoder {
         if payload.len() < 21626 {
             anyhow::bail!("Computors payload too small: {} < 21626", payload.len());
         }
-        // TODO: Full computors decode + publish
+        let epoch = u16::from_le_bytes([payload[0], payload[1]]);
+
+        let mut public_keys = Vec::with_capacity(676);
+        for i in 0..676 {
+            let offset = 2 + i * 32;
+            let key: [u8; 32] = payload[offset..offset + 32].try_into().unwrap();
+            public_keys.push(key);
+        }
+
+        let computors = qonduit_core::Computors {
+            epoch,
+            public_keys,
+            public_key_identities: Vec::new(),
+        };
+
+        self.publisher.publish_computors(epoch, &computors).await?;
+        debug!("Computors: epoch={epoch}");
         Ok(())
     }
 

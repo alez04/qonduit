@@ -15,6 +15,8 @@ use tracing::{debug, error, info, warn};
 use qonduit_core::RequestResponseHeader;
 
 use crate::decoder::PacketDecoder;
+use crate::nats_publish::NatsPublisher;
+use crate::protocol;
 
 /// Configuration for the ingestion client.
 #[derive(Debug, Clone)]
@@ -42,15 +44,30 @@ pub struct IngestionClient {
     config: IngestionConfig,
     nats: NatsClient,
     decoder: PacketDecoder,
+    current_epoch: u16,
+    current_tick: u32,
 }
 
 impl IngestionClient {
     pub fn new(config: IngestionConfig, nats: NatsClient) -> Self {
+        let publisher = NatsPublisher::new(nats.clone());
         Self {
             config,
             nats,
-            decoder: PacketDecoder::new(),
+            decoder: PacketDecoder::new(publisher),
+            current_epoch: 0,
+            current_tick: 0,
         }
+    }
+
+    /// The current epoch reported by the node.
+    pub fn current_epoch(&self) -> u16 {
+        self.current_epoch
+    }
+
+    /// The current tick reported by the node.
+    pub fn current_tick(&self) -> u32 {
+        self.current_tick
     }
 
     /// Run the ingestion loop. Reconnects on failure.
@@ -87,7 +104,34 @@ impl IngestionClient {
 
         info!("Connected to {}", self.config.node_addr);
 
-        // TODO: Exchange public peers handshake (type 0)
+        // Exchange public peers (handshake)
+        let local_peers: [[u8; 4]; 4] = [[127, 0, 0, 1]; 4];
+        match protocol::exchange_public_peers(&mut stream, &local_peers).await {
+            Ok(peers) => {
+                info!("Peer exchange complete, received {} peer entries", peers.len());
+            }
+            Err(e) => {
+                warn!("Peer exchange failed: {e:#}");
+            }
+        }
+
+        // Request current tick info to bootstrap epoch/tick state
+        match protocol::request_current_tick_info(&mut stream).await {
+            Ok(data) if data.len() >= 6 => {
+                let epoch = u16::from_le_bytes([data[0], data[1]]);
+                let tick = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
+                info!("Current state: epoch={epoch}, tick={tick}");
+                // Store in client (requires &mut self for connect_and_read)
+                // For now we log; mutation will be wired once run() takes &mut self.
+                let _ = (epoch, tick);
+            }
+            Ok(data) => {
+                warn!("CurrentTickInfo response too short: {} bytes", data.len());
+            }
+            Err(e) => {
+                warn!("Failed to request current tick info: {e:#}");
+            }
+        }
 
         // Read loop
         loop {
