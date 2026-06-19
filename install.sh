@@ -77,7 +77,7 @@ main() {
     archive_url="https://github.com/${REPO}/releases/download/${VERSION}/${archive}"
 
     tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    trap 'rm -rf "${tmp_dir:-}"' EXIT
 
     echo "Downloading ${archive_url}..."
     if ! curl -fsSL -o "${tmp_dir}/${archive}" "$archive_url"; then
