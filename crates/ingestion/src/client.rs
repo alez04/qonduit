@@ -248,9 +248,14 @@ impl IngestionClient {
 
             // Request current tick info to bootstrap epoch/tick state.
             match protocol::request_current_tick_info(&mut stream).await {
-                Ok(data) if data.len() >= 6 => {
-                    let epoch = u16::from_le_bytes([data[0], data[1]]);
-                    let tick = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
+                Ok(data) if data.len() >= 8 => {
+                    // CurrentTickInfo layout (after header):
+                    // [0..2]  tickDuration (u16)
+                    // [2..4]  epoch (u16)
+                    // [4..8]  tick (u32)
+                    let _tick_duration = u16::from_le_bytes([data[0], data[1]]);
+                    let epoch = u16::from_le_bytes([data[2], data[3]]);
+                    let tick = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
                     info!("Current state: epoch={epoch}, tick={tick}");
                     self.current_epoch = epoch;
                     self.current_tick = tick;
@@ -311,9 +316,10 @@ impl IngestionClient {
                 // Periodically request current tick info
                 _ = tick_request_interval.tick() => {
                     match protocol::request_current_tick_info(stream).await {
-                        Ok(data) if data.len() >= 6 => {
-                            let epoch = u16::from_le_bytes([data[0], data[1]]);
-                            let tick = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
+                        Ok(data) if data.len() >= 8 => {
+                            let _tick_duration = u16::from_le_bytes([data[0], data[1]]);
+                            let epoch = u16::from_le_bytes([data[2], data[3]]);
+                            let tick = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
                             if epoch != self.current_epoch || tick != self.current_tick {
                                 info!("Tick updated: epoch={epoch}, tick={tick}");
                                 self.current_epoch = epoch;
