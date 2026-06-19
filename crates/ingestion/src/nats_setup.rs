@@ -26,48 +26,39 @@ fn stream_definitions() -> Vec<StreamDef> {
     vec![
         StreamDef {
             name: "QONDUIT_TICKS",
-            subjects: vec!["Q.>.QONDUIT.TICK"],
-
+            subjects: vec!["QONDUIT.TICKS"],
         },
         StreamDef {
             name: "QONDUIT_TX",
-            subjects: vec!["Q.>.QONDUIT.TX"],
-
+            subjects: vec!["QONDUIT.TX"],
         },
         StreamDef {
             name: "QONDUIT_ENTITIES",
-            subjects: vec!["Q.>.QONDUIT.ENTITY"],
-
+            subjects: vec!["QONDUIT.ENTITIES"],
         },
         StreamDef {
             name: "QONDUIT_SPECTRUM",
-            subjects: vec!["Q.>.QONDUIT.SPECTRUM"],
-
+            subjects: vec!["QONDUIT.SPECTRUM"],
         },
         StreamDef {
             name: "QONDUIT_COMPUTORS",
-            subjects: vec!["Q.>.QONDUIT.COMPUTORS"],
-
+            subjects: vec!["QONDUIT.COMPUTORS"],
         },
         StreamDef {
             name: "QONDUIT_CUSTMSG",
-            subjects: vec!["Q.>.QONDUIT.CUSTMSG"],
-
+            subjects: vec!["QONDUIT.CUSTMSG"],
         },
         StreamDef {
             name: "QONDUIT_ORACLE",
-            subjects: vec!["Q.>.QONDUIT.ORACLE"],
-
+            subjects: vec!["QONDUIT.ORACLE"],
         },
         StreamDef {
             name: "QONDUIT_ASSETS",
-            subjects: vec!["Q.>.QONDUIT.ASSET"],
-
+            subjects: vec!["QONDUIT.ASSETS"],
         },
         StreamDef {
             name: "QONDUIT_CONTRACTS",
-            subjects: vec!["Q.>.QONDUIT.CONTRACT", "Q.>.QONDUIT.CFNR"],
-
+            subjects: vec!["QONDUIT.CONTRACTS"],
         },
     ]
 }

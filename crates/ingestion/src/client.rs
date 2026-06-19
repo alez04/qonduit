@@ -279,7 +279,8 @@ impl IngestionClient {
 
     /// Read packets from the stream and publish them to NATS.
     ///
-    /// Periodically sends CurrentTickInfo requests to keep epoch/tick updated.
+    /// Periodically sends CurrentTickInfo requests. Handles type 28 responses
+    /// inline when they arrive from the read loop.
     async fn read_loop(
         &mut self,
         stream: &mut TcpStream,
@@ -294,6 +295,19 @@ impl IngestionClient {
                 result = protocol::read_packet(stream) => {
                     match result {
                         Ok((msg_type, dejavu, payload)) => {
+                            // Handle CurrentTickInfo responses inline
+                            if msg_type == 28 && payload.len() >= 8 {
+                                let _tick_duration = u16::from_le_bytes([payload[0], payload[1]]);
+                                let epoch = u16::from_le_bytes([payload[2], payload[3]]);
+                                let tick = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                                if epoch != self.current_epoch || tick != self.current_tick {
+                                    info!("Tick updated: epoch={epoch}, tick={tick}");
+                                    self.current_epoch = epoch;
+                                    self.current_tick = tick;
+                                }
+                                continue;
+                            }
+
                             debug!(
                                 "Packet: type={msg_type}, dejavu={dejavu}, payload_len={}",
                                 payload.len()
@@ -313,25 +327,11 @@ impl IngestionClient {
                         }
                     }
                 }
-                // Periodically request current tick info
+                // Periodically request current tick info (fire-and-forget)
                 _ = tick_request_interval.tick() => {
-                    match protocol::request_current_tick_info(stream).await {
-                        Ok(data) if data.len() >= 8 => {
-                            let _tick_duration = u16::from_le_bytes([data[0], data[1]]);
-                            let epoch = u16::from_le_bytes([data[2], data[3]]);
-                            let tick = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-                            if epoch != self.current_epoch || tick != self.current_tick {
-                                info!("Tick updated: epoch={epoch}, tick={tick}");
-                                self.current_epoch = epoch;
-                                self.current_tick = tick;
-                            }
-                        }
-                        Ok(_) => {
-                            debug!("Short CurrentTickInfo response");
-                        }
-                        Err(e) => {
-                            warn!("Periodic tick info request failed: {e:#}");
-                        }
+                    if let Err(e) = protocol::send_raw(stream, 27, &[], rand::random::<u32>().max(1)).await {
+                        warn!("Failed to send tick info request: {e:#}");
+                        return Err(e);
                     }
                 }
             }
