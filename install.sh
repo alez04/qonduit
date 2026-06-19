@@ -96,9 +96,9 @@ main() {
             ;;
     esac
 
-    # Find the binary (may be in a subdirectory)
+    # Find the binary (may be in a subdirectory or suffixed with target)
     local bin_path
-    bin_path="$(find "$tmp_dir" -maxdepth 2 -name "${BINARY}" -o -name "${BINARY}.exe" | head -1)"
+    bin_path="$(find "$tmp_dir" -maxdepth 2 \( -name "${BINARY}" -o -name "${BINARY}.exe" -o -name "${BINARY}-*" \) -type f | head -1)"
     if [[ -z "$bin_path" ]]; then
         echo "Error: binary not found in archive" >&2
         exit 1
