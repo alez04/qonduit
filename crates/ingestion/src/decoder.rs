@@ -35,8 +35,12 @@ impl PacketDecoder {
         nats: &NatsClient,
     ) -> Result<()> {
         match msg_type {
-            // BroadcastTick (type 3)
+            // BroadcastTickVote (type 3) — individual computor vote
             3 => {
+                self.decode_tick_vote(payload, nats).await?;
+            }
+            // BroadcastTickData (type 8) — full tick data from computor
+            8 => {
                 self.decode_tick(payload, nats).await?;
             }
             // BroadcastTransaction (type 24)
@@ -81,6 +85,21 @@ impl PacketDecoder {
                 debug!("Unhandled message type: {msg_type}");
             }
         }
+        Ok(())
+    }
+
+    async fn decode_tick_vote(&self, payload: &[u8], _nats: &NatsClient) -> Result<()> {
+        if payload.len() < 20 {
+            warn!("TickVote payload too small: {} bytes", payload.len());
+            return Ok(());
+        }
+        let computor_index = u16::from_le_bytes([payload[0], payload[1]]);
+        let epoch = u16::from_le_bytes([payload[2], payload[3]]);
+        let tick = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+        debug!(
+            "TickVote: computor={computor_index}, epoch={epoch}, tick={tick}"
+        );
+        // TODO: publish to NATS subject SUBJECT_TICK_VOTE
         Ok(())
     }
 
