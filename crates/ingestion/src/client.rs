@@ -303,6 +303,11 @@ impl IngestionClient {
         let mut entity_request_interval = tokio::time::interval(ENTITY_REQUEST_INTERVAL);
         entity_request_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+        let mut stats_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        stats_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut packets_since_last_stats: u64 = 0;
+        let mut published_since_last_stats: u64 = 0;
+
         loop {
             tokio::select! {
                 // Read incoming packets
@@ -323,11 +328,13 @@ impl IngestionClient {
                                     metrics::CURRENT_EPOCH.set(epoch as i64);
                                     metrics::CURRENT_TICK.set(tick as i64);
                                 }
+                                packets_since_last_stats += 1;
                                 continue;
                             }
 
                             // Handle RespondEntity (type 32) inline — publish to NATS
                             if msg_type == 32 {
+                                packets_since_last_stats += 1;
                                 if let Err(e) = self.decoder.decode_and_publish(msg_type, dejavu, &payload, self.current_epoch).await {
                                     warn!("Entity decode/publish error: {e:#}");
                                 }
@@ -353,6 +360,7 @@ impl IngestionClient {
                                 "Packet: type={msg_type}, dejavu={dejavu}, payload_len={}",
                                 payload.len()
                             );
+                            packets_since_last_stats += 1;
 
                             if let Err(e) = self
                                 .decoder
@@ -400,6 +408,15 @@ impl IngestionClient {
                             }
                         }
                     }
+                }
+                // Periodic stats summary
+                _ = stats_interval.tick() => {
+                    info!(
+                        "Ingestion stats: packets_rcvd={packets_since_last_stats}, published={published_since_last_stats}, epoch={}, tick={}",
+                        self.current_epoch, self.current_tick
+                    );
+                    packets_since_last_stats = 0;
+                    published_since_last_stats = 0;
                 }
             }
         }
