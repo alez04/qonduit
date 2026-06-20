@@ -24,6 +24,8 @@ services:
       - QONDUIT_LISTEN_ADDR=0.0.0.0:8080
       - QONDUIT_DATA_DIR=/data
       - RUST_LOG=info
+      # Trusted broadcasting nodes (all on port 21841, verified broadcast)
+      - QONDUIT_BOOTSTRAP_ADDRS=32.221.253.134:21841,32.217.18.214:21841,32.217.18.211:21841,24.64.155.56:21841
       # Backfill: set QONDUIT_BACKFILL_ENABLED=true to start historical backfill
       - QONDUIT_BACKFILL_ENABLED=false
       - QONDUIT_BACKFILL_WORKERS=4
