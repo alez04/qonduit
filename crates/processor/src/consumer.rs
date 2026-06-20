@@ -26,7 +26,7 @@ impl Consumer {
         let handles = vec![
             tokio::spawn(Self::consume_stream(
                 js.clone(),
-                "QONDUIT_TICKS",
+                "QONDUIT_TICK",
                 "qonduit-processor-ticks",
                 |payload, indexer| async move { indexer.index_tick(&payload).await },
                 self.indexer.clone(),
@@ -40,16 +40,9 @@ impl Consumer {
             )),
             tokio::spawn(Self::consume_stream(
                 js.clone(),
-                "QONDUIT_ENTITIES",
+                "QONDUIT_ENTITY",
                 "qonduit-processor-entities",
                 |payload, indexer| async move { indexer.index_entity(&payload).await },
-                self.indexer.clone(),
-            )),
-            tokio::spawn(Self::consume_stream(
-                js.clone(),
-                "QONDUIT_SPECTRUM",
-                "qonduit-processor-spectrum",
-                |payload, indexer| async move { indexer.index_spectrum(&payload).await },
                 self.indexer.clone(),
             )),
             tokio::spawn(Self::consume_stream(
@@ -61,14 +54,14 @@ impl Consumer {
             )),
             tokio::spawn(Self::consume_stream(
                 js.clone(),
-                "QONDUIT_ASSETS",
+                "QONDUIT_ASSET",
                 "qonduit-processor-assets",
                 |payload, indexer| async move { indexer.index_asset(&payload).await },
                 self.indexer.clone(),
             )),
             tokio::spawn(Self::consume_stream(
                 js.clone(),
-                "QONDUIT_CONTRACTS",
+                "QONDUIT_CONTRACT",
                 "qonduit-processor-contracts",
                 |payload, indexer| async move { indexer.index_contract_ipo(&payload).await },
                 self.indexer.clone(),
