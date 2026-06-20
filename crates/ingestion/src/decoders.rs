@@ -7,75 +7,70 @@ use anyhow::Result;
 use qonduit_core::identity::encode_base26;
 use qonduit_core::*;
 
-/// Decode a BroadcastTick payload (1708 bytes).
+/// Decode a BroadcastFutureTickData payload (type 8).
 ///
-/// Packet layout (little-endian):
+/// Real C++ TickData layout (little-endian):
 ///
 /// ```text
 /// Offset  Size  Field
-/// 0       2     epoch (u16)
-/// 2       1     number_of_transactions (u8)
-/// 3       1     number_of_special_events (u8)
+/// 0       2     computorIndex (u16)
+/// 2       2     epoch (u16)
 /// 4       4     tick (u32)
-/// 8       8     timestamp (u64)
-/// 16      32    salt / time_lock ([u8; 32])
-/// 48      32    salted_spectrum_hash ([u8; 32])
-/// 80      32    salted_universe_hash ([u8; 32])
-/// 112     32    salted_computor_hash ([u8; 32])
-/// 144     ...   (reserved / compressed tick flags)
-/// 1704    4     mining_nonce (u32)
+/// 8       2     millisecond (u16)
+/// 10      1     second (u8)
+/// 11      1     minute (u8)
+/// 12      1     hour (u8)
+/// 13      1     day (u8)
+/// 14      1     month (u8)
+/// 15      1     year (u8)
+/// 16      32    timelock (m256i)
+/// 48      ...   transactionDigests[4096] (32 bytes each)
+/// ...     ...   contractFees[1024] (8 bytes each)
+/// end     64    signature
 /// ```
+///
+/// We extract the header fields and keep the rest as raw bytes.
 pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
-    if payload.len() < 1708 {
-        anyhow::bail!("Tick payload too small: {} < 1708", payload.len());
+    // Minimum: header (16 bytes) + timelock (32 bytes) + at least 1 signature (64 bytes)
+    if payload.len() < 112 {
+        anyhow::bail!(
+            "TickData payload too small: {} < 112",
+            payload.len()
+        );
     }
 
-    // --- Fixed header fields ---
-    let epoch = u16::from_le_bytes([payload[0], payload[1]]);
-    let number_of_transactions = payload[2];
-    let number_of_special_events = payload[3];
+    // --- Header fields ---
+    let computor_index = u16::from_le_bytes([payload[0], payload[1]]);
+    let epoch = u16::from_le_bytes([payload[2], payload[3]]);
     let tick = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
-    let timestamp = u64::from_le_bytes(payload[8..16].try_into().unwrap());
 
-    // --- Salt / time_lock at offset 16 (32 bytes) ---
+    // --- Timestamp fields (offset 8-15) ---
+    let _millisecond = u16::from_le_bytes([payload[8], payload[9]]);
+    let second = payload[10];
+    let minute = payload[11];
+    let hour = payload[12];
+    let day = payload[13];
+    let month = payload[14];
+    let year = payload[15];
+
+    // Reconstruct a rough timestamp from components
+    let timestamp = ((year as u64) << 40)
+        | ((month as u64) << 32)
+        | ((day as u64) << 24)
+        | ((hour as u64) << 16)
+        | ((minute as u64) << 8)
+        | (second as u64);
+
+    // --- Timelock at offset 16 (32 bytes) ---
     let mut time_lock = [0u8; 32];
     time_lock.copy_from_slice(&payload[16..48]);
 
-    // --- Salted hashes at offsets 48, 80, 112 (32 bytes each) ---
-    let mut salted_spectrum_hash = [0u8; 32];
-    salted_spectrum_hash.copy_from_slice(&payload[48..80]);
-
-    let mut salted_universe_hash = [0u8; 32];
-    salted_universe_hash.copy_from_slice(&payload[80..112]);
-
-    let mut salted_computor_hash = [0u8; 32];
-    salted_computor_hash.copy_from_slice(&payload[112..144]);
-
-    // --- Mining nonce at offset 1704 (last 4 bytes) ---
-    let mining_nonce = u32::from_le_bytes(payload[1704..1708].try_into().unwrap());
-
-    // --- Signature count from appended signatures after the 1708-byte header ---
-    let sig_area_start = 1708;
-    let signature_count = if payload.len() > sig_area_start {
-        ((payload.len() - sig_area_start) / SIGNATURE_SIZE) as u32
-    } else {
-        0
-    };
-
     Ok(TickData {
+        computor_index,
         epoch,
         tick,
         timestamp,
         time_lock,
-        mining_nonce,
-        salted_spectrum_hash,
-        salted_universe_hash,
-        salted_computor_hash,
-        number_of_transactions,
-        number_of_special_events,
-        transaction_count: number_of_transactions as u16,
-        contract_counters: Vec::new(),
-        signature_count,
     })
 }
 
@@ -226,7 +221,20 @@ pub fn decode_entity(payload: &[u8]) -> Result<EntityData> {
     })
 }
 
-/// Decode RespondCurrentTickInfo payload (14+ bytes).
+/// Decode RespondCurrentTickInfo payload (type 28, 14+ bytes).
+///
+/// C++ layout:
+/// ```text
+/// Offset  Size  Field
+/// 0       2     tickDuration (u16)
+/// 2       2     epoch (u16)
+/// 4       4     tick (u32)
+/// 8       2     numberOfAlignedVotes (u16)
+/// 10      2     numberOfMisalignedVotes (u16)
+/// 12      4     initialTick (u32)
+/// 16      4     latestVotingTick (u32)        [optional]
+/// 20      8     timeSinceLastVotingTick (u64) [optional]
+/// ```
 pub fn decode_current_tick_info(payload: &[u8]) -> Result<CurrentTickInfo> {
     if payload.len() < 14 {
         anyhow::bail!(
@@ -235,23 +243,24 @@ pub fn decode_current_tick_info(payload: &[u8]) -> Result<CurrentTickInfo> {
         );
     }
 
-    let epoch = u16::from_le_bytes([payload[0], payload[1]]);
-    let tick = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
-    let number_of_aligned_votes = u16::from_le_bytes([payload[6], payload[7]]);
-    let number_of_misaligned_votes = u16::from_le_bytes([payload[8], payload[9]]);
-    let initial_tick = u32::from_le_bytes([payload[10], payload[11], payload[12], payload[13]]);
+    let _tick_duration = u16::from_le_bytes([payload[0], payload[1]]);
+    let epoch = u16::from_le_bytes([payload[2], payload[3]]);
+    let tick = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+    let number_of_aligned_votes = u16::from_le_bytes([payload[8], payload[9]]);
+    let number_of_misaligned_votes = u16::from_le_bytes([payload[10], payload[11]]);
+    let initial_tick = u32::from_le_bytes([payload[12], payload[13], payload[14], payload[15]]);
 
-    // These fields extend beyond 14 bytes in newer protocol versions
-    let latest_voting_tick = if payload.len() >= 18 {
-        u32::from_le_bytes([payload[14], payload[15], payload[16], payload[17]])
+    // These fields extend beyond 16 bytes in newer protocol versions
+    let latest_voting_tick = if payload.len() >= 20 {
+        u32::from_le_bytes([payload[16], payload[17], payload[18], payload[19]])
     } else {
         0
     };
 
-    let time_since_last_voting_tick = if payload.len() >= 26 {
+    let time_since_last_voting_tick = if payload.len() >= 28 {
         u64::from_le_bytes([
-            payload[18], payload[19], payload[20], payload[21], payload[22], payload[23],
-            payload[24], payload[25],
+            payload[20], payload[21], payload[22], payload[23], payload[24], payload[25],
+            payload[26], payload[27],
         ])
     } else {
         0

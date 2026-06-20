@@ -1,21 +1,23 @@
-//! Tick data from BroadcastTick (type 3).
+//! Tick data from BroadcastFutureTickData (type 8).
 //!
-//! Size: 1708 bytes payload. Layout matches C++ Tick struct from
-//! `structures.h`:
+//! Layout matches C++ TickData struct from `tick.h`:
 //!
 //! ```text
 //! Offset  Size  Field
-//! 0       2     epoch (u16)
-//! 2       1     number_of_transactions (u8)
-//! 3       1     number_of_special_events (u8)
+//! 0       2     computorIndex (u16)
+//! 2       2     epoch (u16)
 //! 4       4     tick (u32)
-//! 8       8     timestamp (u64)
-//! 16      32    salt / time_lock ([u8; 32])
-//! 48      32    salted_spectrum_hash ([u8; 32])
-//! 80      32    salted_universe_hash ([u8; 32])
-//! 112     32    salted_computor_hash ([u8; 32])
-//! 144     1560  (reserved / compressed tick flags)
-//! 1704    4     mining_nonce (u32)
+//! 8       2     millisecond (u16)
+//! 10      1     second (u8)
+//! 11      1     minute (u8)
+//! 12      1     hour (u8)
+//! 13      1     day (u8)
+//! 14      1     month (u8)
+//! 15      1     year (u8)
+//! 16      32    timelock (m256i)
+//! 48      ...   transactionDigests[4096] (32 bytes each)
+//! ...     ...   contractFees[1024] (8 bytes each)
+//! end     64    signature
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -23,19 +25,9 @@ use serde::{Deserialize, Serialize};
 /// Decoded tick for storage/query (serializable).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TickData {
+    pub computor_index: u16,
     pub epoch: u16,
     pub tick: u32,
     pub timestamp: u64,
     pub time_lock: [u8; 32],
-    pub mining_nonce: u32,
-    pub salted_spectrum_hash: [u8; 32],
-    pub salted_universe_hash: [u8; 32],
-    pub salted_computor_hash: [u8; 32],
-    pub number_of_transactions: u8,
-    pub number_of_special_events: u8,
-    pub transaction_count: u16,
-    pub contract_counters: Vec<u16>,
-    pub signature_count: u32,
 }
-
-
