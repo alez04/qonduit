@@ -7,6 +7,7 @@ description = "Query server: HTTP/REST, JSON-RPC 2.0, and WebSocket endpoints"
 [dependencies]
 qonduit-core = { path = "../core" }
 qonduit-storage = { path = "../storage" }
+qonduit-ingestion = { path = "../ingestion" }
 tokio = { workspace = true }
 async-nats = { workspace = true }
 axum = { workspace = true }

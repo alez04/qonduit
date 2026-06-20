@@ -81,8 +81,9 @@ fn json_or_404(data: Option<Vec<u8>>) -> Response {
 
 // --- Handlers ---
 
-async fn metrics() -> impl IntoResponse {
-    crate::metrics::REST_REQUESTS.inc();
+async fn metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Update pipeline-state gauges from live data before rendering
+    crate::metrics::update_pipeline_gauges(&state.pipeline);
     let body = crate::metrics::render_metrics();
     (
         [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
@@ -102,6 +103,7 @@ async fn health() -> impl IntoResponse {
 
 async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     crate::metrics::REST_REQUESTS.inc();
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["system-info"]).inc();
 
     // Take a snapshot of the pipeline status.
     let pipeline = state.pipeline.status();
@@ -116,6 +118,7 @@ async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn current_tick(State(state): State<Arc<AppState>>) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["tick"]).inc();
     match state.storage.get_current_tick() {
         Ok(Some(tick)) => match state.storage.get_tick(tick) {
             Ok(data) => json_or_404(data),
@@ -135,6 +138,7 @@ async fn get_tick(
         Ok(t) => t,
         _ => return bad_request("Invalid tick: must be a valid u32"),
     };
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["tick/:tick"]).inc();
     match state.storage.get_tick(tick) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -146,6 +150,7 @@ async fn get_tick_transactions(
     Path(tick_str): Path<String>,
 ) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["tick/:tick/tx"]).inc();
     let tick = match tick_str.parse::<u32>() {
         Ok(t) => t,
         _ => return bad_request("Invalid tick: must be a valid u32"),
@@ -171,6 +176,7 @@ async fn get_transaction(
     Path(hash_str): Path<String>,
 ) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["tx/:hash"]).inc();
     let hash_bytes = match hex::decode(&hash_str) {
         Ok(bytes) if bytes.len() == 32 => {
             let mut arr = [0u8; 32];
