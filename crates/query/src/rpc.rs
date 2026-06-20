@@ -403,6 +403,32 @@ async fn dispatch_method(
             }
             Ok(serde_json::json!(txs))
         }
+        "qonduit_getEntityHistory" => {
+            crate::metrics::ENTITY_HISTORY_REQUESTS.inc();
+            let id = extract_string_param(params, 0)?;
+            let limit = extract_u32_param(params, 1).unwrap_or(50) as usize;
+            let offset = extract_u32_param(params, 2).unwrap_or(0) as usize;
+            let epoch: Option<u16> = extract_optional_u16_param(params, 3)?;
+
+            let key = identity::decode_base26(&id)
+                .ok_or_else(|| anyhow::anyhow!("Invalid identity"))?;
+
+            let limit = limit.min(500);
+            let total = state.storage.count_entity_transactions(&key)?;
+            let history = state.storage.get_entity_history(&key, epoch, offset, limit)?;
+
+            let transactions: Vec<serde_json::Value> = history
+                .into_iter()
+                .filter_map(|(_tick, data)| serde_json::from_slice(&data).ok())
+                .collect();
+
+            Ok(serde_json::json!({
+                "transactions": transactions,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+            }))
+        }
         "qonduit_search" => {
             let query = extract_string_param(params, 0)?;
             let q = query.trim().to_string();
@@ -544,6 +570,21 @@ async fn dispatch_method(
             let tick = state.storage.get_current_tick()?.unwrap_or(0);
             Ok(serde_json::json!({"epoch": epoch, "currentTick": tick}))
         }
+        "getEpochStats" => {
+            let epoch = extract_u16_param(params, 0)?;
+            match state.storage.get_epoch_stats(epoch)? {
+                Some(data) => Ok(serde_json::from_slice(&data)?),
+                None => Ok(serde_json::json!(null)),
+            }
+        }
+        "listEpochStats" => {
+            let entries = state.storage.list_epoch_stats()?;
+            let items: Vec<serde_json::Value> = entries
+                .into_iter()
+                .filter_map(|(_, data)| serde_json::from_slice(&data).ok())
+                .collect();
+            Ok(serde_json::json!(items))
+        }
         "qonduit_getLogEvents" => {
             let tick = extract_u32_param(params, 0)?;
             let msgs = state.storage.get_custom_messages_for_tick(tick)?;
@@ -603,5 +644,22 @@ fn extract_u32_param(params: Option<&serde_json::Value>, index: usize) -> Result
     arr.get(index)
         .and_then(|v| v.as_u64())
         .map(|n| n as u32)
+        .ok_or_else(|| anyhow::anyhow!("Missing param at index {index}"))
+}
+
+fn extract_optional_u16_param(params: Option<&serde_json::Value>, index: usize) -> Result<Option<u16>, anyhow::Error> {
+    let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+    let arr = params.as_array().ok_or_else(|| anyhow::anyhow!("Params must be array"))?;
+    Ok(arr.get(index)
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u16))
+}
+
+fn extract_u16_param(params: Option<&serde_json::Value>, index: usize) -> Result<u16, anyhow::Error> {
+    let params = params.ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+    let arr = params.as_array().ok_or_else(|| anyhow::anyhow!("Params must be array"))?;
+    arr.get(index)
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u16)
         .ok_or_else(|| anyhow::anyhow!("Missing param at index {index}"))
 }

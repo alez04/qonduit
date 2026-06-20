@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use qonduit_core::{AssetRecord, Computors, ContractIpo, EntityData, PipelineState, TickData, Transaction};
+use qonduit_core::{AssetRecord, Computors, ContractIpo, EntityData, EpochStats, PipelineState, TickData, Transaction};
 use qonduit_storage::WarmStorage;
 use tracing::debug;
 
@@ -39,6 +39,18 @@ impl Indexer {
             tx_last_tick: Arc::new(AtomicU32::new(0)),
             tx_counter: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    /// Get-or-create epoch stats and apply a mutation, then persist.
+    fn update_epoch_stats(&self, epoch: u16, f: impl FnOnce(&mut EpochStats)) -> Result<()> {
+        let mut stats: EpochStats = match self.storage.get_epoch_stats(epoch)? {
+            Some(data) => serde_json::from_slice(&data).unwrap_or_default(),
+            None => EpochStats { epoch, ..Default::default() },
+        };
+        f(&mut stats);
+        let json = serde_json::to_vec(&stats)?;
+        self.storage.put_epoch_stats(epoch, &json)?;
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -98,6 +110,14 @@ impl Indexer {
         self.pipeline.indexed_epoch.store(tick.epoch, std::sync::atomic::Ordering::Relaxed);
         self.pipeline.ticks_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.pipeline.total_ticks_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Update epoch statistics
+        let tick_num = tick.tick;
+        self.update_epoch_stats(tick.epoch, |stats| {
+            stats.tick_count += 1;
+            stats.first_tick = Some(stats.first_tick.unwrap_or(tick_num).min(tick_num));
+            stats.last_tick = Some(stats.last_tick.unwrap_or(tick_num).max(tick_num));
+        })?;
 
         debug!(tick = tick.tick, epoch = tick.epoch, "Indexed tick");
         Ok(())
@@ -176,6 +196,14 @@ impl Indexer {
         debug!(tick = tx.tick, hash = %tx.hash, "Indexed transaction");
         self.pipeline.txs_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
+        // Update epoch statistics
+        let epoch = self.pipeline.indexed_epoch.load(std::sync::atomic::Ordering::Relaxed);
+        if epoch > 0 {
+            self.update_epoch_stats(epoch, |stats| {
+                stats.tx_count += 1;
+            })?;
+        }
+
         Ok(())
     }
 
@@ -193,6 +221,14 @@ impl Indexer {
 
             // Update pipeline state
             self.pipeline.entities_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            // Update epoch statistics
+            let epoch = self.pipeline.indexed_epoch.load(std::sync::atomic::Ordering::Relaxed);
+            if epoch > 0 {
+                self.update_epoch_stats(epoch, |stats| {
+                    stats.entity_count += 1;
+                })?;
+            }
 
             debug!(identity = %entity.identity, "Indexed entity");
         }

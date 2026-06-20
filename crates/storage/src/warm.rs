@@ -39,6 +39,7 @@ pub const CF_LOG_EVENT: &str = "log_event";
 pub const CF_TICK_VOTE: &str = "tick_vote";
 pub const CF_META: &str = "meta";
 pub const CF_ORACLE: &str = "oracle";
+pub const CF_EPOCH_STATS: &str = "epoch_stats";
 
 const ALL_CFS: &[&str] = &[
     CF_TICK,
@@ -56,6 +57,7 @@ const ALL_CFS: &[&str] = &[
     CF_TICK_VOTE,
     CF_META,
     CF_ORACLE,
+    CF_EPOCH_STATS,
 ];
 
 // ---------------------------------------------------------------------------
@@ -278,6 +280,118 @@ impl WarmStorage {
             hashes.push(hash);
         }
         Ok(hashes)
+    }
+
+    /// Get entity transaction history with optional epoch filtering and pagination.
+    ///
+    /// Scans `CF_TX_BY_ENTITY` for the given entity, optionally filtering entries
+    /// whose tick falls within the specified epoch's tick range (via
+    /// `qonduit_core::epoch_intervals`). Returns `(tick, full_tx_data)` pairs
+    /// sorted by tick ascending, with `offset` and `limit` applied.
+    pub fn get_entity_history(
+        &self,
+        entity: &[u8; 32],
+        epoch_filter: Option<u16>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<(u32, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_TX_BY_ENTITY).unwrap();
+
+        // Determine the tick range for epoch filtering.
+        let (tick_lower, tick_upper): (Option<u32>, Option<u32>) = match epoch_filter {
+            Some(epoch) => {
+                match qonduit_core::epoch_intervals::get_epoch_range(epoch) {
+                    Some(range) => (Some(range.first_tick), Some(range.last_tick)),
+                    None => return Ok(Vec::new()), // epoch unknown, no results
+                }
+            }
+            None => (None, None),
+        };
+
+        // Build the start key.
+        let start_key: Vec<u8> = match tick_lower {
+            Some(first_tick) => {
+                let mut k = Vec::with_capacity(40);
+                k.extend_from_slice(entity);
+                k.extend_from_slice(&first_tick.to_be_bytes());
+                k.extend_from_slice(&0u32.to_be_bytes()); // tx_index = 0
+                k
+            }
+            None => {
+                let mut k = Vec::with_capacity(40);
+                k.extend_from_slice(entity);
+                k
+            }
+        };
+
+        let iter = self.db.iterator_cf(
+            cf,
+            IteratorMode::From(&start_key, Direction::Forward),
+        );
+
+        let mut results = Vec::new();
+        let mut skipped = 0usize;
+
+        for item in iter {
+            let (key, value) = item?;
+
+            // Validate key length and entity prefix.
+            if key.len() != 40 || key[..32] != *entity {
+                break;
+            }
+
+            let tick = u32::from_be_bytes([key[32], key[33], key[34], key[35]]);
+
+            // If epoch filtering, skip ticks outside the range.
+            if let Some(upper) = tick_upper {
+                if tick > upper {
+                    break;
+                }
+            }
+
+            // Value is a 32-byte tx hash; fetch full tx data.
+            if value.len() != 32 {
+                continue;
+            }
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&value);
+
+            // Skip items before the offset window.
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+
+            // Collect up to limit.
+            if results.len() >= limit {
+                break;
+            }
+
+            if let Some(data) = self.get_tx(&hash)? {
+                results.push((tick, data));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Count all transaction hash entries for an entity in `CF_TX_BY_ENTITY`.
+    pub fn count_entity_transactions(&self, entity: &[u8; 32]) -> Result<u64> {
+        let cf = self.db.cf_handle(CF_TX_BY_ENTITY).unwrap();
+        let iter = self.db.iterator_cf(
+            cf,
+            IteratorMode::From(entity, Direction::Forward),
+        );
+
+        let mut count: u64 = 0;
+        for item in iter {
+            let (key, _value) = item?;
+            if key.len() != 40 || key[..32] != *entity {
+                break;
+            }
+            count += 1;
+        }
+        Ok(count)
     }
 
     // ------------------------------------------------------------------
@@ -836,5 +950,38 @@ impl WarmStorage {
         let cf_meta = self.db.cf_handle(CF_META).unwrap();
         batch.put_cf(cf_meta, b"current_tick", tick.to_be_bytes());
         batch.put_cf(cf_meta, b"current_epoch", epoch.to_be_bytes());
+    }
+
+    // ------------------------------------------------------------------
+    // Epoch stats operations
+    // ------------------------------------------------------------------
+
+    /// Store epoch statistics.
+    pub fn put_epoch_stats(&self, epoch: u16, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_EPOCH_STATS).unwrap();
+        self.db.put_cf(cf, epoch.to_be_bytes(), data)?;
+        Ok(())
+    }
+
+    /// Retrieve epoch statistics for a specific epoch.
+    pub fn get_epoch_stats(&self, epoch: u16) -> Result<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_EPOCH_STATS).unwrap();
+        Ok(self.db.get_cf(cf, epoch.to_be_bytes())?)
+    }
+
+    /// List all epoch statistics entries.
+    pub fn list_epoch_stats(&self) -> Result<Vec<(u16, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_EPOCH_STATS).unwrap();
+        let iter = self.db.iterator_cf(cf, IteratorMode::Start);
+
+        let mut results = Vec::new();
+        for item in iter {
+            let (key, value) = item?;
+            if key.len() == 2 {
+                let epoch = u16::from_be_bytes([key[0], key[1]]);
+                results.push((epoch, value.to_vec()));
+            }
+        }
+        Ok(results)
     }
 }

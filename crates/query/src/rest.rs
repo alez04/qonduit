@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, State, Query},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
@@ -41,7 +41,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/v1/assets/:index", get(get_asset))
         .route("/v1/contract-ipo/:index", get(get_contract_ipo))
         .route("/v1/entity/:id/transactions", get(get_entity_transactions))
+        .route("/v1/entity/:id/history", get(get_entity_history))
         .route("/v1/active-ipos", get(get_active_ipos))
+        .route("/v1/epochs", get(list_epochs))
+        .route("/v1/epochs/:epoch", get(get_epoch))
         .route("/v1/search/:query", get(search))
         .route("/metrics", get(metrics))
 }
@@ -112,6 +115,15 @@ async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut info = serde_json::to_value(&pipeline).unwrap_or(serde_json::Value::Null);
     if let Some(obj) = info.as_object_mut() {
         obj.insert("version".to_string(), serde_json::json!(env!("CARGO_PKG_VERSION")));
+        // Include total indexed epochs count
+        match state.storage.list_epoch_stats() {
+            Ok(entries) => {
+                obj.insert("totalIndexedEpochs".to_string(), serde_json::json!(entries.len()));
+            }
+            Err(_) => {
+                obj.insert("totalIndexedEpochs".to_string(), serde_json::json!(0));
+            }
+        }
     }
     Json(info).into_response()
 }
@@ -383,6 +395,37 @@ async fn get_active_ipos(State(state): State<Arc<AppState>>) -> impl IntoRespons
     }
 }
 
+async fn list_epochs(State(state): State<Arc<AppState>>) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["v1/epochs"]).inc();
+    match state.storage.list_epoch_stats() {
+        Ok(entries) => {
+            let items: Vec<serde_json::Value> = entries
+                .into_iter()
+                .filter_map(|(_, data)| serde_json::from_slice::<serde_json::Value>(&data).ok())
+                .collect();
+            Json(items).into_response()
+        }
+        Err(e) => storage_err(e),
+    }
+}
+
+async fn get_epoch(
+    State(state): State<Arc<AppState>>,
+    Path(epoch_str): Path<String>,
+) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
+    let epoch = match epoch_str.parse::<u16>() {
+        Ok(e) => e,
+        _ => return bad_request("Invalid epoch: must be a valid u16"),
+    };
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["v1/epochs/:epoch"]).inc();
+    match state.storage.get_epoch_stats(epoch) {
+        Ok(data) => json_or_404(data),
+        Err(e) => storage_err(e),
+    }
+}
+
 async fn get_entity_transactions(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -406,6 +449,61 @@ async fn get_entity_transactions(
         }
         Err(e) => storage_err(e),
     }
+}
+
+/// Query parameters for the entity history endpoint.
+#[derive(serde::Deserialize)]
+pub struct EntityHistoryParams {
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub epoch: Option<u16>,
+}
+
+fn default_limit() -> usize {
+    50
+}
+
+async fn get_entity_history(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(params): Query<EntityHistoryParams>,
+) -> Response {
+    crate::metrics::REST_REQUESTS.inc();
+    crate::metrics::REST_REQUESTS_BY_ROUTE.with_label_values(&["entity/:id/history"]).inc();
+    crate::metrics::ENTITY_HISTORY_REQUESTS.inc();
+
+    let key = match identity::decode_base26(&id) {
+        Some(k) => k,
+        None => return bad_request("Invalid identity: must be a valid base26-encoded string"),
+    };
+
+    let limit = params.limit.min(500); // cap at 500
+
+    let total = match state.storage.count_entity_transactions(&key) {
+        Ok(c) => c,
+        Err(e) => return storage_err(e),
+    };
+
+    let history = match state.storage.get_entity_history(&key, params.epoch, params.offset, limit) {
+        Ok(h) => h,
+        Err(e) => return storage_err(e),
+    };
+
+    let transactions: Vec<serde_json::Value> = history
+        .into_iter()
+        .filter_map(|(_tick, data)| serde_json::from_slice(&data).ok())
+        .collect();
+
+    Json(serde_json::json!({
+        "transactions": transactions,
+        "total": total,
+        "offset": params.offset,
+        "limit": limit,
+    }))
+    .into_response()
 }
 
 async fn search(

@@ -25,3 +25,16 @@ pub use identity::*;
 pub use message_type::NetworkMessageType;
 pub use pipeline::{PipelineState, PipelineStatusResponse};
 pub use structs::*;
+
+use serde::{Deserialize, Serialize};
+
+/// Per-epoch statistics tracked by the indexer.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EpochStats {
+    pub epoch: u16,
+    pub tick_count: u32,
+    pub tx_count: u64,
+    pub entity_count: u64,
+    pub first_tick: Option<u32>,
+    pub last_tick: Option<u32>,
+}

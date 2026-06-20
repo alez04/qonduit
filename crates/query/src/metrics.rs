@@ -71,6 +71,17 @@ pub static RPC_REQUESTS_BY_METHOD: once_cell::sync::Lazy<IntCounterVec> =
         c
     });
 
+/// Counter for entity history API requests (both REST and RPC).
+pub static ENTITY_HISTORY_REQUESTS: once_cell::sync::Lazy<IntCounter> =
+    once_cell::sync::Lazy::new(|| {
+        let c = IntCounter::with_opts(opts!(
+            "qonduit_entity_history_requests_total",
+            "Total entity transaction history requests"
+        )).unwrap();
+        registry().register(Box::new(c.clone())).unwrap();
+        c
+    });
+
 // =========================================================================
 // Pipeline Gauges (updated from PipelineState on each /metrics scrape)
 // =========================================================================
