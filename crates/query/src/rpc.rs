@@ -307,15 +307,50 @@ async fn dispatch_method(
             }
         }
         "getContractFunction" => {
-            // Forward to node via TCP -- for now return not supported
-            Err(anyhow::anyhow!("Contract function calls not yet supported"))
+            // TODO: Forward REQUEST_CONTRACT_FUNCTION (type 42) to a Qubic node via TCP.
+            // The request format is:
+            //   [0..4]  contractIndex (u32 LE)
+            //   [4..6]  inputType (u16 LE)
+            //   [6..8]  inputSize (u16 LE)
+            //   [8..]   input payload (variable)
+            //
+            // The node responds with RESPOND_CONTRACT_FUNCTION (type 43):
+            //   Variable-size output (0 bytes = invocation failed or no function registered)
+            //
+            // Implementation plan: The ingestion layer already handles type 43 responses
+            // and publishes them to NATS subject QONDUIT.CFNR. We need to:
+            // 1. Add a NATS request/reply subject for contract function calls
+            // 2. Ingestion subscribes to QONDUIT.CFNR.REQUEST, sends REQUEST_CONTRACT_FUNCTION
+            //    to the node, collects RESPOND_CONTRACT_FUNCTION, and publishes result
+            // 3. This RPC handler sends a NATS request and waits for the reply
+            //
+            // For now, return a clear error indicating this is not yet implemented.
+            Err(anyhow::anyhow!(
+                "getContractFunction is not yet supported. \
+                 This requires TCP forwarding to a Qubic node. \
+                 TODO: Implement via NATS request/reply through the ingestion layer."
+            ))
         }
         "getSyncState" => {
             let tick = state.storage.get_current_tick()?.unwrap_or(0);
             Ok(serde_json::json!({"syncing": false, "currentTick": tick}))
         }
         "getContractFunctionResult" => {
-            Err(anyhow::anyhow!("Contract function calls not yet supported"))
+            // TODO: This would query the result of a previously submitted contract function
+            // call, identified by dejavu. Currently all contract function responses are
+            // published to NATS QONDUIT.CFNR with the dejavu as correlation ID.
+            //
+            // Implementation requires:
+            // 1. A pending-response cache in the query layer keyed by dejavu
+            // 2. Subscribe to QONDUIT.CFNR, store results temporarily
+            // 3. This method looks up the cached result by dejavu
+            //
+            // For now, return a clear error.
+            Err(anyhow::anyhow!(
+                "getContractFunctionResult is not yet supported. \
+                 This requires a pending-response cache for contract function calls. \
+                 TODO: Implement via NATS subscription + dejavu-keyed cache."
+            ))
         }
         
         // --- Qonduit-native methods ---

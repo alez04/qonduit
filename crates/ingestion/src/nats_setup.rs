@@ -63,6 +63,26 @@ fn stream_definitions() -> Vec<StreamDef> {
             name: "QONDUIT_CFNR",
             subjects: vec!["QONDUIT.CFNR"],
         },
+        StreamDef {
+            name: "QONDUIT_QUORUM",
+            subjects: vec!["QONDUIT.QUORUM"],
+        },
+        StreamDef {
+            name: "QONDUIT_LOG",
+            subjects: vec!["QONDUIT.LOG"],
+        },
+        StreamDef {
+            name: "QONDUIT_LOGDIGEST",
+            subjects: vec!["QONDUIT.LOGDIGEST"],
+        },
+        StreamDef {
+            name: "QONDUIT_MINING",
+            subjects: vec!["QONDUIT.MINING"],
+        },
+        StreamDef {
+            name: "QONDUIT_SPECTRUM",
+            subjects: vec!["QONDUIT.SPECTRUM"],
+        },
     ]
 }
 

@@ -39,6 +39,8 @@ struct Config {
     query: QueryConfig,
     #[serde(default)]
     ingestion: IngestionConfig,
+    #[serde(default)]
+    processor: ProcessorConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +106,16 @@ struct IngestionConfig {
     bootstrap_addrs: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct ProcessorConfig {
+    /// Replay all messages from stream start (catch-up mode).
+    #[serde(default)]
+    catch_up: bool,
+    /// Number of messages per fetch batch (defaults to 10 for live, 100 for catch-up).
+    #[serde(default)]
+    batch_size: Option<usize>,
+}
+
 
 // ---------------------------------------------------------------------------
 // Main
@@ -146,6 +158,14 @@ async fn main() -> Result<()> {
     if let Ok(v) = std::env::var("QONDUIT_DATA_DIR") {
         config.storage.data_dir = PathBuf::from(v);
     }
+    if let Ok(v) = std::env::var("QONDUIT_CATCH_UP") {
+        config.processor.catch_up = v == "true" || v == "1";
+    }
+    if let Ok(v) = std::env::var("QONDUIT_BATCH_SIZE") {
+        if let Ok(n) = v.parse::<usize>() {
+            config.processor.batch_size = Some(n);
+        }
+    }
 
     info!("Qonduit v{} starting...", env!("CARGO_PKG_VERSION"));
     info!("  NATS: {}", config.nats.url);
@@ -154,6 +174,7 @@ async fn main() -> Result<()> {
     let node_str = config.ingestion.node_addr.as_deref().unwrap_or("");
     info!("  Node: {}", if node_str.is_empty() { "(none - query-only)" } else { node_str });
     info!("  Bootstrap: {:?}", config.ingestion.bootstrap_addrs);
+    info!("  Processor: catch_up={}, batch_size={:?}", config.processor.catch_up, config.processor.batch_size);
 
     // --- Phase 1: Storage (warm tier + hot cache) ---
     let warm_storage = qonduit_storage::WarmStorage::open(&config.storage.data_dir)
@@ -225,10 +246,17 @@ async fn main() -> Result<()> {
         let storage = warm_storage.clone();
         let nats = nats.clone();
         let pipeline = pipeline.clone();
+        let processor_config = qonduit_processor::ProcessorConfig {
+            consumer_group: "qonduit-processors".to_string(),
+            catch_up: config.processor.catch_up,
+            batch_size: config.processor.batch_size.unwrap_or(
+                if config.processor.catch_up { 100 } else { 10 },
+            ),
+        };
         tokio::spawn(async move {
             tokio::select! {
                 result = qonduit_processor::run(
-                    qonduit_processor::ProcessorConfig::default(),
+                    processor_config,
                     nats,
                     storage,
                     pipeline,

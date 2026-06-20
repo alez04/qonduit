@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionType {
+    /// Simple transfer, no input payload (type 0).
+    Transfer = 0,
     /// Additional issuance (type 1).
     AdditionalIssuance = 1,
     /// Transfer ownership (type 2).
@@ -21,6 +23,57 @@ pub enum TransactionType {
     Ask = 25,
     /// Distribute dividends (type 26).
     DistributeDividends = 26,
+}
+
+/// Decoded transaction input classification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputType {
+    /// Simple transfer (input_type = 0), no payload.
+    SimpleTransfer,
+    /// Smart contract call (input_type > 0, not a known asset operation).
+    SmartContractCall(u16),
+    /// Asset issuance (input_type = 1).
+    AssetIssuance,
+    /// Asset ownership transfer (input_type = 2).
+    AssetOwnershipTransfer,
+    /// Asset possession transfer (input_type = 3).
+    AssetPossessionTransfer,
+    /// Dividend distribution (input_type = 26).
+    DividendDistribution,
+    /// Bid on contract IPO (input_type = 24).
+    ContractBid,
+    /// Ask on contract IPO (input_type = 25).
+    ContractAsk,
+}
+
+impl InputType {
+    /// Classify a raw input_type value.
+    pub fn classify(input_type: u16) -> Self {
+        match input_type {
+            0 => Self::SimpleTransfer,
+            1 => Self::AssetIssuance,
+            2 => Self::AssetOwnershipTransfer,
+            3 => Self::AssetPossessionTransfer,
+            24 => Self::ContractBid,
+            25 => Self::ContractAsk,
+            26 => Self::DividendDistribution,
+            other => Self::SmartContractCall(other),
+        }
+    }
+
+    /// Return a human-readable label for this input type.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::SimpleTransfer => "simple_transfer",
+            Self::AssetIssuance => "asset_issuance",
+            Self::AssetOwnershipTransfer => "asset_ownership_transfer",
+            Self::AssetPossessionTransfer => "asset_possession_transfer",
+            Self::DividendDistribution => "dividend_distribution",
+            Self::ContractBid => "contract_bid",
+            Self::ContractAsk => "contract_ask",
+            Self::SmartContractCall(_) => "smart_contract_call",
+        }
+    }
 }
 
 /// Raw transaction header (80 bytes) from the wire.
@@ -60,6 +113,7 @@ pub struct Transaction {
     pub input_type: u16,
     pub input_size: u16,
     pub input_hex: String,
+    pub input_type_name: String,
     pub signature_hex: String,
 }
 

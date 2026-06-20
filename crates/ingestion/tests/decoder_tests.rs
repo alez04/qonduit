@@ -35,18 +35,18 @@ fn test_decode_current_tick_info_too_small() {
 
 #[test]
 fn test_decode_system_info_valid() {
-    let mut payload = vec![0u8; 144];
-    // version = 135
-    payload[0..8].copy_from_slice(&135u64.to_le_bytes());
-    // peer_count = 42
-    payload[24..32].copy_from_slice(&42u64.to_le_bytes());
-    // current_tick = 100000
-    payload[48..56].copy_from_slice(&100000u64.to_le_bytes());
+    let mut payload = vec![0u8; 128];
+    // version = 135 (i16 LE) at offset 0
+    payload[0..2].copy_from_slice(&135i16.to_le_bytes());
+    // epoch = 10 at offset 2
+    payload[2..4].copy_from_slice(&10u16.to_le_bytes());
+    // tick = 100000 at offset 4
+    payload[4..8].copy_from_slice(&100000u32.to_le_bytes());
 
     let result = decoders::decode_system_info(&payload).unwrap();
     assert_eq!(result.version, 135);
-    assert_eq!(result.peer_count, 42);
-    assert_eq!(result.current_tick, 100000);
+    assert_eq!(result.epoch, 10);
+    assert_eq!(result.tick, 100000);
 }
 
 #[test]
@@ -106,13 +106,13 @@ fn test_decode_transaction_too_small() {
 
 #[test]
 fn test_decode_computors_valid() {
-    // 21626 bytes: 2 epoch + 2 padding + 676*32 keys + 64 sig
-    let mut payload = vec![0u8; 21626];
+    // Payload: 2 epoch + 676*32 keys = 21634 minimum (no signature needed for key parsing)
+    let mut payload = vec![0u8; 21634];
     // epoch = 42 (at offset 0, little-endian u16)
     payload[0] = 42;
     payload[1] = 0;
-    // First key at offset 4 (2-byte epoch + 2-byte padding): all 0xAA
-    payload[4..36].fill(0xAA);
+    // First key at offset 2 (no padding in C++ struct): all 0xAA
+    payload[2..34].fill(0xAA);
 
     let result = decoders::decode_computors(&payload).unwrap();
     assert_eq!(result.epoch, 42);

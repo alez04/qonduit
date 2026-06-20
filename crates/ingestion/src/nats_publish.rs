@@ -9,7 +9,8 @@ use async_nats::jetstream;
 use tracing::debug;
 
 use qonduit_core::{
-    AssetRecord, Computors, ContractIpo, EntityData, TickData, Transaction,
+    AssetRecord, Computors, ContractIpo, CustomMiningSolution, CustomMiningTask,
+    EntityData, LogStateDigest, OracleDataResponse, QuorumTick, TickData, Transaction,
 };
 
 /// Placeholder for custom (broadcast) messages.
@@ -209,6 +210,146 @@ impl NatsPublisher {
             .await
             .with_context(|| format!("Publish ack failed for {subject}"))?;
         debug!("Published tick vote epoch={epoch} tick={}", vote.tick);
+        Ok(())
+    }
+
+    /// Publish a spectrum entry to `QONDUIT.SPECTRUM`.
+    pub async fn publish_spectrum(
+        &self,
+        epoch: u16,
+        entry: &serde_json::Value,
+    ) -> Result<()> {
+        let subject = "QONDUIT.SPECTRUM".to_string();
+        let payload =
+            serde_json::to_vec(entry).context("Failed to serialize spectrum entry")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!("Published spectrum entry epoch={epoch} to {subject}");
+        Ok(())
+    }
+
+    /// Publish decoded log events to `QONDUIT.LOG`.
+    pub async fn publish_log_events(
+        &self,
+        epoch: u16,
+        events: &[qonduit_core::LogEvent],
+    ) -> Result<()> {
+        let subject = "QONDUIT.LOG".to_string();
+        let payload =
+            serde_json::to_vec(events).context("Failed to serialize log events")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!(
+            count = events.len(),
+            epoch = epoch,
+            "Published log events to {subject}"
+        );
+        Ok(())
+    }
+
+    /// Publish an aggregated quorum tick to `QONDUIT.QUORUM`.
+    pub async fn publish_quorum_tick(&self, epoch: u16, qt: &QuorumTick) -> Result<()> {
+        let subject = "QONDUIT.QUORUM".to_string();
+        let payload = serde_json::to_vec(qt).context("Failed to serialize QuorumTick")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!(
+            "Published quorum tick epoch={epoch} tick={} votes={}",
+            qt.tick, qt.vote_count
+        );
+        Ok(())
+    }
+
+    /// Publish a log state digest to `QONDUIT.LOGDIGEST`.
+    pub async fn publish_log_state_digest(&self, digest: &LogStateDigest) -> Result<()> {
+        let subject = "QONDUIT.LOGDIGEST".to_string();
+        let payload =
+            serde_json::to_vec(digest).context("Failed to serialize LogStateDigest")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!("Published log state digest to {subject}");
+        Ok(())
+    }
+
+    /// Publish oracle data response to `QONDUIT.ORACLE`.
+    pub async fn publish_oracle_data(
+        &self,
+        epoch: u16,
+        oracle: &OracleDataResponse,
+    ) -> Result<()> {
+        let subject = "QONDUIT.ORACLE".to_string();
+        let payload =
+            serde_json::to_vec(oracle).context("Failed to serialize OracleDataResponse")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!(
+            "Published oracle data epoch={epoch} resType={}",
+            oracle.res_type
+        );
+        Ok(())
+    }
+
+    /// Publish a custom mining task to `QONDUIT.MINING`.
+    pub async fn publish_custom_mining_task(
+        &self,
+        epoch: u16,
+        task: &CustomMiningTask,
+    ) -> Result<()> {
+        let subject = "QONDUIT.MINING".to_string();
+        let payload =
+            serde_json::to_vec(task).context("Failed to serialize CustomMiningTask")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!(
+            "Published custom mining task epoch={epoch} job_id={}",
+            task.job_id
+        );
+        Ok(())
+    }
+
+    /// Publish a custom mining solution to `QONDUIT.MINING`.
+    pub async fn publish_custom_mining_solution(
+        &self,
+        epoch: u16,
+        solution: &CustomMiningSolution,
+    ) -> Result<()> {
+        let subject = "QONDUIT.MINING".to_string();
+        let payload = serde_json::to_vec(solution)
+            .context("Failed to serialize CustomMiningSolution")?;
+        self.js
+            .publish(subject.clone(), payload.into())
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?
+            .await
+            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        debug!(
+            "Published custom mining solution epoch={epoch} job_id={}",
+            solution.job_id
+        );
         Ok(())
     }
 }

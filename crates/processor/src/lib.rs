@@ -19,12 +19,22 @@ use indexer::Indexer;
 pub struct ProcessorConfig {
     /// NATS consumer group name.
     pub consumer_group: String,
+
+    /// When true, consumers replay from the start of all streams (catch-up mode).
+    /// When false, consumers only receive new messages (live mode).
+    pub catch_up: bool,
+
+    /// Number of messages to fetch per batch from each consumer.
+    /// Defaults to 100 in catch-up mode, 10 in live mode.
+    pub batch_size: usize,
 }
 
 impl Default for ProcessorConfig {
     fn default() -> Self {
         Self {
             consumer_group: "qonduit-processors".to_string(),
+            catch_up: false,
+            batch_size: 10,
         }
     }
 }
@@ -36,9 +46,12 @@ pub async fn run(
     storage: Arc<qonduit_storage::WarmStorage>,
     pipeline: Arc<PipelineState>,
 ) -> Result<()> {
-    info!("Starting processor (group: {})...", config.consumer_group);
+    info!(
+        "Starting processor (group: {}, catch_up: {}, batch_size: {})...",
+        config.consumer_group, config.catch_up, config.batch_size
+    );
 
-    let indexer = Indexer::new(storage, pipeline);
-    let consumer = Consumer::new(nats, indexer);
+    let indexer = Indexer::new(storage, pipeline.clone());
+    let consumer = Consumer::new(nats, indexer, pipeline, config.catch_up, config.batch_size);
     consumer.run().await
 }

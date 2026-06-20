@@ -39,6 +39,44 @@ impl Indexer {
             }
         }
 
+        // Detect epoch transition
+        let previous_epoch = self.pipeline.indexed_epoch.load(std::sync::atomic::Ordering::Relaxed);
+        if previous_epoch > 0 && tick.epoch != previous_epoch {
+            tracing::warn!(
+                epoch_transition = true,
+                from_epoch = previous_epoch,
+                to_epoch = tick.epoch,
+                tick = tick.tick,
+                "Epoch transition detected: {previous_epoch} -> {} at tick {}",
+                tick.epoch, tick.tick
+            );
+
+            // Trigger cold tier export for the completed epoch if we have tick data
+            let previous_tick = self.pipeline.indexed_tick.load(std::sync::atomic::Ordering::Relaxed);
+            if previous_tick > 0 {
+                let tick_range = (0, previous_tick);
+                match qonduit_storage::ColdStorage::new(std::path::PathBuf::from("./data/cold")).export_epoch(
+                    &self.storage,
+                    previous_epoch,
+                    tick_range,
+                ) {
+                    Ok(()) => {
+                        tracing::warn!(
+                            epoch = previous_epoch,
+                            "Cold tier export completed for epoch {previous_epoch}"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            epoch = previous_epoch,
+                            error = %e,
+                            "Cold tier export failed for epoch {previous_epoch}, will retry later"
+                        );
+                    }
+                }
+            }
+        }
+
         // Always update epoch
         self.storage.set_current_epoch(tick.epoch)?;
 
@@ -175,7 +213,81 @@ impl Indexer {
 
         self.storage.put_asset(asset.issuance_index, payload)?;
 
+        // Wire entity→asset index for issuing, owning, and possessing entities
+        for entity_key in [
+            asset.issuing_entity,
+            asset.owning_entity,
+            asset.possessing_entity,
+        ] {
+            // Only index non-zero entities (empty 32-byte arrays)
+            if entity_key != [0u8; 32] {
+                if let Err(e) = self.storage.put_entity_asset(&entity_key, asset.issuance_index) {
+                    debug!(
+                        index = asset.issuance_index,
+                        "Failed to index entity→asset: {e}"
+                    );
+                }
+            }
+        }
+
         debug!(index = asset.issuance_index, name = %asset.name, "Indexed asset");
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Log events
+    // ------------------------------------------------------------------
+
+    /// Index a batch of log events (from BroadcastMessage type 1).
+    pub async fn index_log_events(&self, payload: &[u8]) -> Result<()> {
+        let events: Vec<qonduit_core::LogEvent> =
+            serde_json::from_slice(payload).context("Failed to deserialize log events")?;
+
+        for event in &events {
+            let event_json = serde_json::to_vec(event)
+                .context("Failed to serialize log event")?;
+            self.storage.put_log_event(
+                event.tick,
+                event.tx_index,
+                event.event_type,
+                &event_json,
+            )?;
+        }
+
+        debug!(count = events.len(), "Indexed log events");
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Tick vote aggregation
+    // ------------------------------------------------------------------
+
+    /// Index a tick vote from a computor.
+    pub async fn index_tick_vote(&self, payload: &[u8]) -> Result<()> {
+        let vote: serde_json::Value =
+            serde_json::from_slice(payload).context("Failed to deserialize tick vote")?;
+
+        let tick = vote["tick"].as_u64().unwrap_or(0) as u32;
+        let computor_index = vote["computor_index"].as_u64().unwrap_or(0) as u16;
+
+        self.storage.put_tick_vote(tick, computor_index, payload)?;
+
+        // Check if we have reached quorum for this tick
+        let vote_count = self.storage.count_votes_for_tick(tick).unwrap_or(0);
+        if vote_count >= qonduit_core::QUORUM {
+            debug!(
+                tick = tick,
+                votes = vote_count,
+                "Quorum reached for tick"
+            );
+        }
+
+        debug!(
+            tick = tick,
+            computor = computor_index,
+            total_votes = vote_count,
+            "Indexed tick vote"
+        );
         Ok(())
     }
 

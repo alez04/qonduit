@@ -29,6 +29,17 @@ pub struct PipelineState {
     pub txs_indexed: AtomicU64,
     /// Total number of entities indexed since startup.
     pub entities_indexed: AtomicU64,
+
+    // ------------------------------------------------------------------
+    // Consumer lag metrics (estimated unprocessed messages per stream)
+    // ------------------------------------------------------------------
+    /// Estimated number of unprocessed tick messages in the NATS stream.
+    pub tick_lag: AtomicU64,
+    /// Estimated number of unprocessed transaction messages in the NATS stream.
+    pub tx_lag: AtomicU64,
+    /// Estimated number of unprocessed entity messages in the NATS stream.
+    pub entity_lag: AtomicU64,
+
     /// When the pipeline started.
     started_at: Instant,
 }
@@ -56,6 +67,12 @@ pub struct PipelineStatusResponse {
     pub txs_indexed: u64,
     /// Total entities indexed since startup.
     pub entities_indexed: u64,
+    /// Estimated number of unprocessed tick messages in the NATS stream.
+    pub tick_lag: u64,
+    /// Estimated number of unprocessed transaction messages in the NATS stream.
+    pub tx_lag: u64,
+    /// Estimated number of unprocessed entity messages in the NATS stream.
+    pub entity_lag: u64,
     /// Seconds since the pipeline started.
     pub uptime_seconds: u64,
 }
@@ -73,6 +90,9 @@ impl PipelineState {
             ticks_indexed: AtomicU64::new(0),
             txs_indexed: AtomicU64::new(0),
             entities_indexed: AtomicU64::new(0),
+            tick_lag: AtomicU64::new(0),
+            tx_lag: AtomicU64::new(0),
+            entity_lag: AtomicU64::new(0),
             started_at: Instant::now(),
         }
     }
@@ -114,6 +134,9 @@ impl PipelineState {
             ticks_indexed: self.ticks_indexed.load(Ordering::Relaxed),
             txs_indexed: self.txs_indexed.load(Ordering::Relaxed),
             entities_indexed: self.entities_indexed.load(Ordering::Relaxed),
+            tick_lag: self.tick_lag.load(Ordering::Relaxed),
+            tx_lag: self.tx_lag.load(Ordering::Relaxed),
+            entity_lag: self.entity_lag.load(Ordering::Relaxed),
             uptime_seconds: self.started_at.elapsed().as_secs(),
         }
     }

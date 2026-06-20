@@ -51,6 +51,8 @@ pub enum NetworkMessageType {
     RespondOracleData = 67,
     BroadcastCustomMiningTask = 68,
     BroadcastCustomMiningSolution = 69,
+    RequestTxStatus = 201,
+    RespondTxStatus = 202,
     SpecialCommand = 255,
 }
 
@@ -104,6 +106,8 @@ impl NetworkMessageType {
             67 => Some(Self::RespondOracleData),
             68 => Some(Self::BroadcastCustomMiningTask),
             69 => Some(Self::BroadcastCustomMiningSolution),
+            201 => Some(Self::RequestTxStatus),
+            202 => Some(Self::RespondTxStatus),
             255 => Some(Self::SpecialCommand),
             _ => None,
         }
@@ -134,6 +138,7 @@ impl NetworkMessageType {
                 | Self::RequestLogStateDigest
                 | Self::RequestActiveIpos
                 | Self::RequestOracleData
+                | Self::RequestTxStatus
         )
     }
 
@@ -157,6 +162,7 @@ impl NetworkMessageType {
                 | Self::RespondLogStateDigest
                 | Self::RespondActiveIpo
                 | Self::RespondOracleData
+                | Self::RespondTxStatus
                 | Self::EndResponse
                 | Self::TryAgain
         )
