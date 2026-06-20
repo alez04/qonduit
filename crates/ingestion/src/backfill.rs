@@ -632,20 +632,11 @@ impl BackfillWorker {
                                     self.shared.ticks_discovered.fetch_add(1, Ordering::Relaxed);
                                 }
 
-                                // Immediately send type 29 (transaction request) for this tick
-                                let tx_dejavu = rand::random::<u32>().max(1);
-                                if let Err(e) = protocol::send_raw(
-                                    &mut stream,
-                                    29,
-                                    &resp_tick.to_le_bytes(),
-                                    tx_dejavu,
-                                )
-                                .await
-                                {
-                                    debug!("Worker {}: failed to send tx request for {resp_tick}: {e:#}", self.worker_id);
-                                } else {
-                                    expected.push_back(ExpectedResponse::TransactionEnd { tick: resp_tick, dejavu: tx_dejavu });
-                                }
+                                // NOTE: We do NOT send type 29 (transaction requests) during
+                                // pipelined backfill. Transaction responses contain thousands of
+                                // packets that would block the pipeline for minutes per tick.
+                                // Transactions for recent ticks are handled by the live ingestion.
+                                // For historical data, a separate tx-only pass can be added later.
 
                                 self.shared.ticks_completed.fetch_add(1, Ordering::Relaxed);
                                 self.pipeline.indexed_tick.fetch_max(resp_tick, Ordering::Relaxed);
