@@ -106,15 +106,23 @@ struct IngestionConfig {
     bootstrap_addrs: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 struct ProcessorConfig {
     /// Replay all messages from stream start (catch-up mode).
-    #[serde(default)]
+    #[serde(default = "default_catch_up")]
     catch_up: bool,
     /// Number of messages per fetch batch (defaults to 10 for live, 100 for catch-up).
     #[serde(default)]
     batch_size: Option<usize>,
 }
+
+impl Default for ProcessorConfig {
+    fn default() -> Self {
+        Self { catch_up: true, batch_size: None }
+    }
+}
+
+fn default_catch_up() -> bool { true }
 
 
 // ---------------------------------------------------------------------------
