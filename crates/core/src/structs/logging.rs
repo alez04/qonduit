@@ -5,8 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::constants::LOG_TX_PER_TICK;
-
 /// Response to a log pruning request (type 57).
 ///
 /// Layout: 8 bytes, `success` as i64 (0 = success, non-zero = error code).

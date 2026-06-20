@@ -432,7 +432,7 @@ impl PacketDecoder {
     }
 
     /// Decode RespondTxStatus (type 202) and log the result.
-    async fn decode_tx_status(&self, payload: &[u8], dejavu: u32) -> Result<()> {
+    async fn decode_tx_status(&self, payload: &[u8], _dejavu: u32) -> Result<()> {
         // The dejavu field for respond messages carries the tick from the request context.
         // We use dejavu as a placeholder; the actual tick is inside the payload.
         let resp = decoders::decode_tx_status(payload, 0)?;
