@@ -68,6 +68,7 @@ const ALL_CFS: &[&str] = &[
 #[derive(Clone)]
 pub struct WarmStorage {
     db: Arc<DB>,
+    path: std::path::PathBuf,
 }
 
 impl WarmStorage {
@@ -119,7 +120,12 @@ impl WarmStorage {
             max_write_buffers = max_write_buffers,
             "Opened warm storage (auto-tuned for performance)"
         );
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self { db: Arc::new(db), path: path.to_path_buf() })
+    }
+
+    /// Get the data directory path.
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.path
     }
 
     // ------------------------------------------------------------------

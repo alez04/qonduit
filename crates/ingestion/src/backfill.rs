@@ -251,14 +251,25 @@ impl BackfillClient {
 
         let mut start_tick = self.config.start_tick;
 
-        // When start_tick=0 (default), only backfill recent history that nodes
-        // actually store. Qubic nodes typically keep ~100K recent ticks.
-        if start_tick == 0 && end_tick > 100_000 {
-            start_tick = end_tick.saturating_sub(100_000);
-            info!(
-                "Backfill: auto-setting start_tick to {start_tick} (end_tick={end_tick}, \
-                 nodes only serve recent ~100K ticks. Set QONDUIT_BACKFILL_START_TICK=0 to scan all)"
-            );
+        // When start_tick=0 (default), start from the beginning of the epoch.
+        // Qubic nodes typically serve the current epoch (~2-3M ticks).
+        // The skip-ahead logic handles missing ranges automatically.
+        if start_tick == 0 {
+            // Use epoch intervals if available to find the epoch start tick
+            let ranges = qonduit_core::epoch_intervals::get_epoch_ranges();
+            if let Some(current_range) = ranges.iter().find(|r| end_tick >= r.first_tick && end_tick <= r.last_tick) {
+                start_tick = current_range.first_tick;
+                info!(
+                    "Backfill: using epoch interval start_tick={start_tick} for epoch {} (end_tick={end_tick})",
+                    current_range.epoch
+                );
+            } else if end_tick > 100_000 {
+                // Fallback: try a reasonable range. The skip-ahead logic will handle gaps.
+                start_tick = end_tick.saturating_sub(2_000_000); // ~2M ticks (one epoch)
+                info!(
+                    "Backfill: no epoch intervals, setting start_tick={start_tick} (end_tick={end_tick}, scanning ~2M ticks)"
+                );
+            }
         }
 
         if start_tick >= end_tick {
@@ -348,11 +359,68 @@ impl BackfillClient {
             }
         });
 
-        // Wait for all workers to complete
+        // Wait for all tick data workers to complete
         for handle in handles {
             let _ = handle.await;
         }
         progress_handle.abort();
+
+        // --- Phase 2: Transaction backfill ---
+        // Fetch transactions for all ticks that were successfully discovered.
+        // Uses sequential type 29 requests per worker (responses are multi-packet).
+        let ticks_done = self.shared.ticks_discovered.load(Ordering::Relaxed);
+        if ticks_done > 0 {
+            info!("Backfill: tick data phase complete ({ticks_done} ticks). Starting transaction backfill...");
+            let tx_workers = self.config.workers.max(1);
+            let tx_chunk = (ticks_done as usize / tx_workers).max(1);
+            let mut tx_handles = Vec::new();
+
+            for tx_worker_id in 0..tx_workers {
+                let tx_start = start_tick + (tx_worker_id as u32 * tx_chunk as u32);
+                let tx_end = if tx_worker_id == tx_workers - 1 {
+                    end_tick
+                } else {
+                    (start_tick + ((tx_worker_id as u32 + 1) * tx_chunk as u32)).min(end_tick)
+                };
+                if tx_start >= tx_end { continue; }
+
+                let config = self.config.clone();
+                let nats = self.nats.clone();
+                let shared = Arc::clone(&self.shared);
+                let pipeline = self.pipeline.clone();
+                let peer_manager = Arc::clone(&peer_manager);
+
+                tx_handles.push(tokio::spawn(async move {
+                    let js = async_nats::jetstream::new(nats);
+                    let mut publisher = NatsPublisher::from_context(js);
+                    publisher.set_fire_and_forget(true);
+
+                    let mut current = tx_start;
+                    while current < tx_end {
+                        let addr = match peer_manager.best_peer().await {
+                            Some(a) => a,
+                            None => break,
+                        };
+                        match Self::fetch_txs_for_range(
+                            tx_worker_id, current, tx_end.min(current + 1000),
+                            addr, &config, &shared, &pipeline, &mut publisher,
+                        ).await {
+                            Ok(last) => { current = last; }
+                            Err(e) => {
+                                debug!("Tx worker {tx_worker_id}: {addr} failed at {current}: {e:#}");
+                                peer_manager.mark_failure(&addr).await;
+                                tokio::time::sleep(WORKER_RECONNECT_DELAY).await;
+                            }
+                        }
+                    }
+                    info!("Tx worker {tx_worker_id}: finished");
+                }));
+            }
+
+            for handle in tx_handles {
+                let _ = handle.await;
+            }
+        }
 
         self.shared.running.store(false, Ordering::Relaxed);
         self.pipeline.backfill_running.store(false, Ordering::Relaxed);
@@ -437,6 +505,78 @@ impl BackfillClient {
         } else {
             anyhow::bail!("CurrentTickInfo response too short: {} bytes", data.len());
         }
+    }
+
+    /// Fetch transactions for a range of ticks from a single peer.
+    /// Sends type 29 requests and collects type 24 responses until type 35.
+    async fn fetch_txs_for_range(
+        worker_id: usize,
+        range_start: u32,
+        range_end: u32,
+        addr: SocketAddr,
+        config: &BackfillConfig,
+        shared: &BackfillShared,
+        pipeline: &PipelineState,
+        publisher: &mut NatsPublisher,
+    ) -> Result<u32> {
+        let mut stream = match tokio::time::timeout(
+            config.tcp_timeout,
+            TcpStream::connect(addr),
+        ).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => anyhow::bail!("TCP connect failed: {e:#}"),
+            Err(_) => anyhow::bail!("TCP connect timed out"),
+        };
+        let _ = stream.set_nodelay(true);
+
+        // Peer exchange
+        let local_peers: [[u8; 4]; 4] = [[0, 0, 0, 0]; 4];
+        protocol::exchange_public_peers(&mut stream, &local_peers).await?;
+
+        // Get epoch
+        let epoch = match protocol::request_current_tick_info(&mut stream).await {
+            Ok(data) if data.len() >= 4 => u16::from_le_bytes([data[2], data[3]]),
+            _ => pipeline.node_epoch.load(Ordering::Relaxed),
+        };
+
+        info!("Tx worker {worker_id}: connected to {addr}, fetching txs for ticks {range_start}..{range_end}");
+
+        let mut last_tick = range_start;
+        for tick in range_start..range_end {
+            // Send type 29 request
+            let dejavu = rand::random::<u32>().max(1);
+            protocol::send_raw(&mut stream, 29, &tick.to_le_bytes(), dejavu).await?;
+
+            // Collect type 24 responses until type 35
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() { break; }
+
+                match tokio::time::timeout(remaining, protocol::read_packet(&mut stream)).await {
+                    Ok(Ok((msg_type, _dejavu, payload))) => {
+                        match msg_type {
+                            24 => {
+                                // Transaction response
+                                if let Err(e) = publisher.publish_tx(epoch, &crate::decoders::decode_transaction(&payload)?).await {
+                                    debug!("Tx worker {worker_id}: tx publish error: {e:#}");
+                                } else {
+                                    shared.txs_discovered.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                            35 => { break; } // End of transactions
+                            54 => { break; } // TryAgain
+                            _ => { /* skip broadcasts */ }
+                        }
+                    }
+                    Ok(Err(e)) => anyhow::bail!("Read error: {e:#}"),
+                    Err(_) => break,
+                }
+            }
+            last_tick = tick + 1;
+        }
+
+        Ok(last_tick)
     }
 }
 
@@ -722,7 +862,8 @@ impl BackfillWorker {
                     return Err(e).context("Read error in sliding-window pipeline");
                 }
                 Err(_) => {
-                    // Timeout: if pipeline is stuck, break and reconnect
+                    // Timeout: if pipeline is stuck, count pending as failures
+                    // and return an error to trigger reconnection.
                     let pending = expected.len();
                     if pending > 0 {
                         warn!(
@@ -735,6 +876,7 @@ impl BackfillWorker {
                                 self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
                             }
                         }
+                        anyhow::bail!("Pipeline timeout with {pending} pending requests");
                     }
                     break;
                 }

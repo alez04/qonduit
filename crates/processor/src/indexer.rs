@@ -4,7 +4,7 @@
 //! the appropriate keys and values into the warm tier column families.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use qonduit_core::{AssetRecord, Computors, ContractIpo, EntityData, EpochStats, PipelineState, TickData, Transaction};
@@ -18,6 +18,8 @@ pub struct Indexer {
     tx_last_tick: Arc<AtomicU32>,
     /// Sequential counter for transactions within the current tick.
     tx_counter: Arc<AtomicU32>,
+    /// Mutex to prevent epoch stats read-modify-write races.
+    epoch_stats_lock: Arc<Mutex<()>>,
 }
 
 impl Clone for Indexer {
@@ -27,6 +29,7 @@ impl Clone for Indexer {
             pipeline: Arc::clone(&self.pipeline),
             tx_last_tick: Arc::clone(&self.tx_last_tick),
             tx_counter: Arc::clone(&self.tx_counter),
+            epoch_stats_lock: Arc::clone(&self.epoch_stats_lock),
         }
     }
 }
@@ -38,11 +41,14 @@ impl Indexer {
             pipeline,
             tx_last_tick: Arc::new(AtomicU32::new(0)),
             tx_counter: Arc::new(AtomicU32::new(0)),
+            epoch_stats_lock: Arc::new(Mutex::new(())),
         }
     }
 
     /// Get-or-create epoch stats and apply a mutation, then persist.
+    /// Uses a mutex to prevent read-modify-write races between concurrent consumers.
     fn update_epoch_stats(&self, epoch: u16, f: impl FnOnce(&mut EpochStats)) -> Result<()> {
+        let _guard = self.epoch_stats_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut stats: EpochStats = match self.storage.get_epoch_stats(epoch)? {
             Some(data) => serde_json::from_slice(&data).unwrap_or_default(),
             None => EpochStats { epoch, ..Default::default() },
@@ -78,10 +84,13 @@ impl Indexer {
                 tick.epoch, tick.tick
             );
 
+            // Export previous epoch to cold storage
             let previous_tick = self.pipeline.indexed_tick.load(std::sync::atomic::Ordering::Relaxed);
+            let data_dir = self.storage.data_dir();
             if previous_tick > 0 {
-                let tick_range = (0, previous_tick);
-                match qonduit_storage::ColdStorage::new(std::path::PathBuf::from("./data/cold")).export_epoch(
+                let cold_path = data_dir.join("cold");
+                let tick_range = (0u32, previous_tick); // Full range for cold export
+                match qonduit_storage::ColdStorage::new(cold_path).export_epoch(
                     &self.storage,
                     previous_epoch,
                     tick_range,

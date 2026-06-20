@@ -30,4 +30,15 @@ pub struct TickData {
     pub tick: u32,
     pub timestamp: u64,
     pub time_lock: [u8; 32],
+    /// SHA-256 digests of the 4096 transaction slots.
+    /// Stored as hex string for JSON compatibility (131,072 bytes raw).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub transaction_digests_hex: String,
+    /// Contract fees for the 1024 contracts (8 bytes each = 8,192 bytes raw).
+    /// Stored as hex string.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub contract_fees_hex: String,
+    /// SchnorrQ signature (64 bytes) as hex string.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub signature_hex: String,
 }

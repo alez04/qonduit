@@ -32,10 +32,27 @@ use qonduit_core::*;
 ///
 /// We extract the header fields and keep the rest as raw bytes.
 pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
-    // Minimum: header (16 bytes) + timelock (32 bytes) + at least 1 signature (64 bytes)
-    if payload.len() < 112 {
+    // C++ TickData full layout:
+    // [0..2]      computorIndex (u16)
+    // [2..4]      epoch (u16)
+    // [4..8]      tick (u32)
+    // [8..10]     millisecond (u16)
+    // [10]        second (u8)
+    // [11]        minute (u8)
+    // [12]        hour (u8)
+    // [13]        day (u8)
+    // [14]        month (u8)
+    // [15]        year (u8)
+    // [16..48]    timelock (32 bytes)
+    // [48..131120] transactionDigests[4096] (32 bytes each)
+    // [131120..139312] contractFees[1024] (8 bytes each)
+    // [139312..139376] signature (64 bytes)
+    // TOTAL: 139,376 bytes
+
+    // Minimum: just header + timelock for partial data (backward compat)
+    if payload.len() < 48 {
         anyhow::bail!(
-            "TickData payload too small: {} < 112",
+            "TickData payload too small: {} < 48",
             payload.len()
         );
     }
@@ -54,17 +71,30 @@ pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
     let month = payload[14];
     let year = payload[15];
 
-    // Reconstruct a rough timestamp from components
-    let timestamp = ((year as u64) << 40)
-        | ((month as u64) << 32)
-        | ((day as u64) << 24)
-        | ((hour as u64) << 16)
-        | ((minute as u64) << 8)
-        | (second as u64);
+    // Convert to Unix timestamp (seconds since epoch)
+    // Qubic years are 2-digit (e.g., 26 = 2026)
+    let full_year = 2000 + year as u32;
+    let timestamp = qubic_date_to_unix(full_year, month, day, hour, minute, second);
 
     // --- Timelock at offset 16 (32 bytes) ---
     let mut time_lock = [0u8; 32];
     time_lock.copy_from_slice(&payload[16..48]);
+
+    // --- Optional: transaction digests + contract fees + signature ---
+    let (transaction_digests_hex, contract_fees_hex, signature_hex) =
+        if payload.len() >= 139_376 {
+            // Full payload: extract everything
+            (
+                hex::encode(&payload[48..131_120]),       // 4096 * 32 = 131,072 bytes
+                hex::encode(&payload[131_120..139_312]),  // 1024 * 8 = 8,192 bytes
+                hex::encode(&payload[139_312..139_376]),  // 64 bytes
+            )
+        } else if payload.len() > 48 {
+            // Partial payload (legacy/backward compat): store whatever we have
+            (hex::encode(&payload[48..]), String::new(), String::new())
+        } else {
+            (String::new(), String::new(), String::new())
+        };
 
     Ok(TickData {
         computor_index,
@@ -72,7 +102,35 @@ pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
         tick,
         timestamp,
         time_lock,
+        transaction_digests_hex,
+        contract_fees_hex,
+        signature_hex,
     })
+}
+
+/// Convert Qubic date components to Unix timestamp (seconds since 1970-01-01).
+fn qubic_date_to_unix(year: u32, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> u64 {
+    // Days per month (non-leap year)
+    let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    // Compute days from 1970-01-01 to year-month-day
+    let mut total_days: u64 = 0;
+    for y in 1970..year {
+        total_days += if is_leap_year(y) { 366 } else { 365 };
+    }
+    for m in 1..month as u32 {
+        total_days += days_in_month[m as usize] as u64;
+        if m == 2 && is_leap_year(year) {
+            total_days += 1;
+        }
+    }
+    total_days += day.saturating_sub(1) as u64;
+
+    total_days * 86400 + hour as u64 * 3600 + minute as u64 * 60 + second as u64
+}
+
+fn is_leap_year(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 /// Decode a BroadcastTransaction payload (80 + input_size + 64 bytes).
