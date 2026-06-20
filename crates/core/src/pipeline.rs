@@ -211,11 +211,10 @@ impl PipelineState {
         // Only recalculate if at least 3 seconds have passed (avoids division noise)
         if window_elapsed >= 3 {
             let delta_indexed = total_indexed.saturating_sub(last_indexed);
-            let rate = if window_elapsed > 0 {
-                delta_indexed * 1000 / window_elapsed // stored as milli-ticks/sec
-            } else {
-                0
-            };
+            let rate = delta_indexed
+                .saturating_mul(1000)
+                .checked_div(window_elapsed)
+                .unwrap_or(0); // milli-ticks/sec
             self.current_indexing_rate.store(rate, Ordering::Relaxed);
             self.rate_window_last_time.store(now, Ordering::Relaxed);
             self.rate_window_last_indexed.store(total_indexed, Ordering::Relaxed);
