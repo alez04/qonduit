@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_nats::Client as NatsClient;
@@ -30,6 +30,13 @@ const TICK_REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How often to send entity requests (in seconds).
 const ENTITY_REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Rotate to a new peer every 15 minutes to spread load across the network.
+const PEER_ROTATION_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// If no broadcast packets (non-type-28) are received in this window, the node
+/// is considered "silent" and we rotate to a different peer.
+const SILENT_NODE_THRESHOLD_SECS: u64 = 60;
 
 /// Max pending entity identities to avoid unbounded growth.
 const MAX_PENDING_ENTITIES: usize = 500;
@@ -306,7 +313,14 @@ impl IngestionClient {
         let mut stats_interval = tokio::time::interval(std::time::Duration::from_secs(30));
         stats_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut packets_since_last_stats: u64 = 0;
+        let mut broadcast_since_last_stats: u64 = 0;
         let mut published_since_last_stats: u64 = 0;
+
+        let mut rotation_interval = tokio::time::interval(PEER_ROTATION_INTERVAL);
+        rotation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        // Track when we last saw a broadcast packet (non-heartbeat)
+        let mut last_broadcast = Instant::now();
 
         loop {
             tokio::select! {
@@ -361,6 +375,8 @@ impl IngestionClient {
                                 payload.len()
                             );
                             packets_since_last_stats += 1;
+                            broadcast_since_last_stats += 1;
+                            last_broadcast = Instant::now();
 
                             if let Err(e) = self
                                 .decoder
@@ -409,14 +425,33 @@ impl IngestionClient {
                         }
                     }
                 }
-                // Periodic stats summary
+                // Periodic stats summary + silent node detection
                 _ = stats_interval.tick() => {
+                    let silent_secs = last_broadcast.elapsed().as_secs();
                     info!(
-                        "Ingestion stats: packets_rcvd={packets_since_last_stats}, published={published_since_last_stats}, epoch={}, tick={}",
-                        self.current_epoch, self.current_tick
+                        "Ingestion stats: packets_rcvd={}, broadcasts={}, published={}, silent_for={}s, epoch={}, tick={}",
+                        packets_since_last_stats, broadcast_since_last_stats, published_since_last_stats,
+                        silent_secs, self.current_epoch, self.current_tick
                     );
+
+                    // If no broadcast packets for longer than the threshold, this
+                    // node is a "lite" node or otherwise not relaying data.
+                    if silent_secs >= SILENT_NODE_THRESHOLD_SECS && packets_since_last_stats > 0 {
+                        warn!(
+                            "Node at {addr} is silent (no broadcasts for {silent_secs}s). Rotating to a different peer."
+                        );
+                        self.peer_manager.mark_failure(&addr).await;
+                        anyhow::bail!("Silent node {addr}: no broadcast packets for {silent_secs}s");
+                    }
+
                     packets_since_last_stats = 0;
+                    broadcast_since_last_stats = 0;
                     published_since_last_stats = 0;
+                }
+                // Periodic peer rotation to spread load across the network
+                _ = rotation_interval.tick() => {
+                    info!("Peer rotation timer triggered, rotating to a new peer");
+                    anyhow::bail!("Peer rotation: switching to a different node for load distribution");
                 }
             }
         }
