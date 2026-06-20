@@ -40,6 +40,8 @@ struct Config {
     #[serde(default)]
     ingestion: IngestionConfig,
     #[serde(default)]
+    backfill: BackfillConfig,
+    #[serde(default)]
     processor: ProcessorConfig,
 }
 
@@ -97,14 +99,46 @@ fn default_listen_addr() -> String {
     "0.0.0.0:8080".to_string()
 }
 
-#[derive(Debug, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Deserialize, Default)]
 struct IngestionConfig {
     #[serde(default)]
     node_addr: Option<String>,
     #[serde(default)]
     bootstrap_addrs: Vec<String>,
 }
+
+#[derive(Debug, Deserialize)]
+struct BackfillConfig {
+    /// Enable historical backfill.
+    #[serde(default)]
+    enabled: bool,
+    /// Number of parallel TCP workers for backfill.
+    #[serde(default = "default_backfill_workers")]
+    workers: usize,
+    /// Start tick for backfill (0 = start from epoch 1).
+    #[serde(default)]
+    start_tick: u32,
+    /// End tick for backfill (0 = auto-detect from node).
+    #[serde(default)]
+    end_tick: u32,
+    /// Delay between ticks per worker (ms). 0 = no delay.
+    #[serde(default)]
+    tick_delay_ms: u64,
+}
+
+impl Default for BackfillConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            workers: default_backfill_workers(),
+            start_tick: 0,
+            end_tick: 0,
+            tick_delay_ms: 0,
+        }
+    }
+}
+
+fn default_backfill_workers() -> usize { 4 }
 
 #[derive(Debug, Deserialize)]
 struct ProcessorConfig {
@@ -163,6 +197,30 @@ async fn main() -> Result<()> {
     if let Ok(v) = std::env::var("QONDUIT_BOOTSTRAP_ADDRS") {
         config.ingestion.bootstrap_addrs = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     }
+    // Backfill env var overrides
+    if let Ok(v) = std::env::var("QONDUIT_BACKFILL_ENABLED") {
+        config.backfill.enabled = v == "true" || v == "1";
+    }
+    if let Ok(v) = std::env::var("QONDUIT_BACKFILL_WORKERS") {
+        if let Ok(n) = v.parse::<usize>() {
+            config.backfill.workers = n;
+        }
+    }
+    if let Ok(v) = std::env::var("QONDUIT_BACKFILL_START_TICK") {
+        if let Ok(n) = v.parse::<u32>() {
+            config.backfill.start_tick = n;
+        }
+    }
+    if let Ok(v) = std::env::var("QONDUIT_BACKFILL_END_TICK") {
+        if let Ok(n) = v.parse::<u32>() {
+            config.backfill.end_tick = n;
+        }
+    }
+    if let Ok(v) = std::env::var("QONDUIT_BACKFILL_TICK_DELAY_MS") {
+        if let Ok(n) = v.parse::<u64>() {
+            config.backfill.tick_delay_ms = n;
+        }
+    }
     if let Ok(v) = std::env::var("QONDUIT_DATA_DIR") {
         config.storage.data_dir = PathBuf::from(v);
     }
@@ -183,6 +241,10 @@ async fn main() -> Result<()> {
     info!("  Node: {}", if node_str.is_empty() { "(none - query-only)" } else { node_str });
     info!("  Bootstrap: {:?}", config.ingestion.bootstrap_addrs);
     info!("  Processor: catch_up={}, batch_size={:?}", config.processor.catch_up, config.processor.batch_size);
+    if config.backfill.enabled {
+        info!("  Backfill: enabled, workers={}, start_tick={}, end_tick={}, tick_delay={}ms",
+            config.backfill.workers, config.backfill.start_tick, config.backfill.end_tick, config.backfill.tick_delay_ms);
+    }
 
     // --- Phase 1: Storage (warm tier + hot cache) ---
     let warm_storage = qonduit_storage::WarmStorage::open(&config.storage.data_dir)
@@ -223,6 +285,7 @@ async fn main() -> Result<()> {
     let (ingestion_stop_tx, mut ingestion_stop_rx) = tokio::sync::watch::channel(false);
     let (processor_stop_tx, mut processor_stop_rx) = tokio::sync::watch::channel(false);
     let (query_stop_tx, mut query_stop_rx) = tokio::sync::watch::channel(false);
+    let (backfill_stop_tx, mut backfill_stop_rx) = tokio::sync::watch::channel(false);
 
     // Query server
     let query_handle = {
@@ -335,6 +398,43 @@ async fn main() -> Result<()> {
         }))
     };
 
+    // Backfill client — runs in background when enabled, after main ingestion starts.
+    let backfill_handle = if config.backfill.enabled {
+        let backfill_config = qonduit_ingestion::backfill::BackfillConfig {
+            node_addr: config.ingestion.node_addr.as_deref()
+                .and_then(|s| s.parse().ok()),
+            bootstrap_addrs: config.ingestion.bootstrap_addrs.iter()
+                .filter_map(|s| s.parse().ok())
+                .collect(),
+            workers: config.backfill.workers,
+            start_tick: config.backfill.start_tick,
+            end_tick: config.backfill.end_tick,
+            tick_delay: Duration::from_millis(config.backfill.tick_delay_ms),
+            tcp_timeout: Duration::from_secs(30),
+        };
+        let nats = nats.clone();
+        let pipeline = pipeline.clone();
+        Some(tokio::spawn(async move {
+            let mut client = qonduit_ingestion::BackfillClient::new(
+                backfill_config,
+                nats,
+                pipeline,
+            );
+            tokio::select! {
+                result = client.run() => {
+                    if let Err(e) = result {
+                        tracing::error!("Backfill error: {e:#}");
+                    }
+                }
+                _ = backfill_stop_rx.changed() => {
+                    info!("Backfill shutting down");
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     info!("Qonduit is running — all services started");
 
     // --- Wait for shutdown signal ---
@@ -348,6 +448,16 @@ async fn main() -> Result<()> {
             Ok(Ok(())) => info!("Ingestion stopped gracefully"),
             Ok(Err(e)) => tracing::warn!("Ingestion task panicked: {e}"),
             Err(_) => info!("Ingestion did not stop within timeout"),
+        }
+    }
+
+    // Stop backfill (if running)
+    let _ = backfill_stop_tx.send(true);
+    if let Some(handle) = backfill_handle {
+        match tokio::time::timeout(Duration::from_secs(10), handle).await {
+            Ok(Ok(())) => info!("Backfill stopped gracefully"),
+            Ok(Err(e)) => tracing::warn!("Backfill task panicked: {e}"),
+            Err(_) => info!("Backfill did not stop within timeout"),
         }
     }
 

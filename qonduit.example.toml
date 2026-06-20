@@ -20,3 +20,17 @@ listen_addr = "0.0.0.0:8080"
 # catch_up = true
 # Batch size: auto-scales based on memory and pending messages
 # batch_size = 100
+
+[backfill]
+# Enable historical backfill (default: false)
+# When enabled, connects to Qubic nodes via parallel TCP connections
+# and requests historical tick data and transactions.
+# enabled = false
+# Number of parallel TCP workers (default: 4)
+# workers = 4
+# Start tick for backfill (0 = start from epoch 1)
+# start_tick = 0
+# End tick for backfill (0 = auto-detect from node)
+# end_tick = 0
+# Delay between ticks per worker in ms (0 = no delay)
+# tick_delay_ms = 0

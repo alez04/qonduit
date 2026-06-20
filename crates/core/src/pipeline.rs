@@ -48,6 +48,24 @@ pub struct PipelineState {
     /// Total ticks indexed (monotonically increasing, used for rate calculation).
     pub total_ticks_indexed: AtomicU64,
 
+    // ------------------------------------------------------------------
+    // Backfill progress tracking
+    // ------------------------------------------------------------------
+    /// Whether the historical backfill is currently running.
+    pub backfill_running: AtomicBool,
+    /// Total ticks completed by the backfill process.
+    pub backfill_ticks_completed: AtomicU64,
+    /// Total transactions discovered by the backfill process.
+    pub backfill_txs_discovered: AtomicU64,
+    /// Total tick data items discovered by the backfill process.
+    pub backfill_ticks_discovered: AtomicU64,
+    /// Ticks that failed during backfill.
+    pub backfill_ticks_failed: AtomicU32,
+    /// Backfill start tick.
+    pub backfill_start_tick: AtomicU32,
+    /// Backfill end tick.
+    pub backfill_end_tick: AtomicU32,
+
     /// When the pipeline started.
     started_at: Instant,
 }
@@ -87,6 +105,23 @@ pub struct PipelineStatusResponse {
     pub estimated_seconds_to_live: u64,
     /// Average indexing rate in ticks per second (computed over uptime).
     pub avg_indexing_rate: f64,
+    // ------------------------------------------------------------------
+    // Backfill progress
+    // ------------------------------------------------------------------
+    /// Whether the historical backfill is running.
+    pub backfill_running: bool,
+    /// Total ticks completed by backfill.
+    pub backfill_ticks_completed: u64,
+    /// Total transactions discovered by backfill.
+    pub backfill_txs_discovered: u64,
+    /// Total tick data items discovered by backfill.
+    pub backfill_ticks_discovered: u64,
+    /// Ticks that failed during backfill.
+    pub backfill_ticks_failed: u32,
+    /// Backfill start tick.
+    pub backfill_start_tick: u32,
+    /// Backfill end tick.
+    pub backfill_end_tick: u32,
 }
 
 impl PipelineState {
@@ -112,6 +147,13 @@ impl PipelineState {
             entity_lag: AtomicU64::new(0),
             indexing_start_time: AtomicU64::new(now),
             total_ticks_indexed: AtomicU64::new(0),
+            backfill_running: AtomicBool::new(false),
+            backfill_ticks_completed: AtomicU64::new(0),
+            backfill_txs_discovered: AtomicU64::new(0),
+            backfill_ticks_discovered: AtomicU64::new(0),
+            backfill_ticks_failed: AtomicU32::new(0),
+            backfill_start_tick: AtomicU32::new(0),
+            backfill_end_tick: AtomicU32::new(0),
             started_at: Instant::now(),
         }
     }
@@ -181,6 +223,13 @@ impl PipelineState {
             uptime_seconds: self.started_at.elapsed().as_secs(),
             estimated_seconds_to_live,
             avg_indexing_rate,
+            backfill_running: self.backfill_running.load(Ordering::Relaxed),
+            backfill_ticks_completed: self.backfill_ticks_completed.load(Ordering::Relaxed),
+            backfill_txs_discovered: self.backfill_txs_discovered.load(Ordering::Relaxed),
+            backfill_ticks_discovered: self.backfill_ticks_discovered.load(Ordering::Relaxed),
+            backfill_ticks_failed: self.backfill_ticks_failed.load(Ordering::Relaxed),
+            backfill_start_tick: self.backfill_start_tick.load(Ordering::Relaxed),
+            backfill_end_tick: self.backfill_end_tick.load(Ordering::Relaxed),
         }
     }
 }

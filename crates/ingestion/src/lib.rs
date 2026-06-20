@@ -1,6 +1,7 @@
 //! Ingestion worker: connects to Qubic node via TCP, decodes packets,
 //! and publishes events to NATS JetStream.
 
+pub mod backfill;
 pub mod client;
 pub mod decoder;
 pub mod decoders;
@@ -11,6 +12,7 @@ pub mod pending;
 pub mod peer_manager;
 pub mod protocol;
 
+pub use backfill::{BackfillClient, BackfillHandle};
 pub use client::{IngestionClient, IngestionHandle};
 pub use nats_publish::NatsPublisher;
 pub use peer_manager::PeerManager;

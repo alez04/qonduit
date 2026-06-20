@@ -171,3 +171,111 @@ pub async fn request_entity(stream: &mut TcpStream, identity: &[u8; 32]) -> Resu
         }
     }
 }
+
+/// Request historical tick data (type 16, REQUEST_TICK_DATA).
+///
+/// Sends a request for a specific tick number and returns the raw TickData
+/// payload (type 8 response).
+pub async fn request_tick_data(stream: &mut TcpStream, tick: u32) -> Result<Vec<u8>> {
+    let dejavu = rand::random::<u32>().max(1);
+    send_raw(stream, 16, &tick.to_le_bytes(), dejavu).await?;
+
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            anyhow::bail!("Timeout waiting for TickData response for tick {tick}");
+        }
+
+        match tokio::time::timeout(remaining, read_packet(stream)).await {
+            Ok(Ok((msg_type, _dejavu, payload))) => {
+                if msg_type == 8 {
+                    // BROADCAST_FUTURE_TICK_DATA — this is the tick data response
+                    return Ok(payload);
+                }
+                if msg_type == 35 {
+                    anyhow::bail!("Node returned EndResponse for TickData request (tick {tick})");
+                }
+                if msg_type == 54 {
+                    anyhow::bail!("Node returned TryAgain for TickData request (tick {tick})");
+                }
+                debug!("Skipping packet type={msg_type} while waiting for TickData (tick {tick})");
+            }
+            Ok(Err(e)) => return Err(e).context("Read error waiting for TickData"),
+            Err(_) => anyhow::bail!("Timeout waiting for TickData response (tick {tick})"),
+        }
+    }
+}
+
+/// Request transactions for a specific tick (type 29, REQUEST_TICK_TRANSACTIONS).
+///
+/// Sends the request and collects all BroadcastTransaction (type 24) responses
+/// until EndResponse (type 35) or timeout. Returns the raw payloads.
+pub async fn request_tick_transactions(
+    stream: &mut TcpStream,
+    tick: u32,
+) -> Result<Vec<Vec<u8>>> {
+    let dejavu = rand::random::<u32>().max(1);
+    send_raw(stream, 29, &tick.to_le_bytes(), dejavu).await?;
+
+    let mut transactions = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            anyhow::bail!("Timeout waiting for TickTransactions response (tick {tick})");
+        }
+
+        match tokio::time::timeout(remaining, read_packet(stream)).await {
+            Ok(Ok((msg_type, _dejavu, payload))) => {
+                if msg_type == 24 {
+                    // BROADCAST_TRANSACTION — a transaction for this tick
+                    transactions.push(payload);
+                }
+                if msg_type == 35 {
+                    // END_RESPONSE — all transactions received
+                    break;
+                }
+                if msg_type == 54 {
+                    anyhow::bail!("Node returned TryAgain for TickTransactions (tick {tick})");
+                }
+            }
+            Ok(Err(e)) => return Err(e).context("Read error waiting for TickTransactions"),
+            Err(_) => anyhow::bail!("Timeout waiting for TickTransactions (tick {tick})"),
+        }
+    }
+
+    Ok(transactions)
+}
+
+/// Request log events for a specific tick (type 44, REQUEST_LOG).
+pub async fn request_log(stream: &mut TcpStream, tick: u32) -> Result<Vec<u8>> {
+    let dejavu = rand::random::<u32>().max(1);
+    send_raw(stream, 44, &tick.to_le_bytes(), dejavu).await?;
+
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            anyhow::bail!("Timeout waiting for Log response (tick {tick})");
+        }
+
+        match tokio::time::timeout(remaining, read_packet(stream)).await {
+            Ok(Ok((msg_type, _dejavu, payload))) => {
+                if msg_type == 45 {
+                    // RESPOND_LOG
+                    return Ok(payload);
+                }
+                if msg_type == 35 {
+                    anyhow::bail!("Node returned EndResponse for Log request (tick {tick})");
+                }
+                if msg_type == 54 {
+                    anyhow::bail!("Node returned TryAgain for Log request (tick {tick})");
+                }
+                debug!("Skipping packet type={msg_type} while waiting for Log (tick {tick})");
+            }
+            Ok(Err(e)) => return Err(e).context("Read error waiting for Log"),
+            Err(_) => anyhow::bail!("Timeout waiting for Log response (tick {tick})"),
+        }
+    }
+}
