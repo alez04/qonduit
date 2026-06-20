@@ -256,16 +256,16 @@ impl BackfillClient {
             let peer_manager = Arc::clone(&peer_manager);
 
             handles.push(tokio::spawn(async move {
-                let mut worker = BackfillWorker {
+                let mut worker = BackfillWorker::new(
                     config,
                     worker_id,
                     worker_start,
                     worker_end,
-                    nats,
                     pipeline,
                     shared,
                     peer_manager,
-                };
+                    nats,
+                );
                 if let Err(e) = worker.run().await {
                     error!("Backfill worker {worker_id} failed: {e:#}");
                 }
@@ -402,13 +402,37 @@ struct BackfillWorker {
     worker_id: usize,
     worker_start: u32,
     worker_end: u32,
-    nats: NatsClient,
     pipeline: Arc<PipelineState>,
     shared: Arc<BackfillShared>,
     peer_manager: Arc<PeerManager>,
+    publisher: NatsPublisher,
 }
 
 impl BackfillWorker {
+    fn new(
+        config: BackfillConfig,
+        worker_id: usize,
+        worker_start: u32,
+        worker_end: u32,
+        pipeline: Arc<PipelineState>,
+        shared: Arc<BackfillShared>,
+        peer_manager: Arc<PeerManager>,
+        nats: NatsClient,
+    ) -> Self {
+        let js = async_nats::jetstream::new(nats);
+        let mut publisher = NatsPublisher::from_context(js);
+        publisher.set_fire_and_forget(true);
+        Self {
+            config,
+            worker_id,
+            worker_start,
+            worker_end,
+            pipeline,
+            shared,
+            peer_manager,
+            publisher,
+        }
+    }
     /// Run this worker. Reconnects on failure.
     async fn run(&mut self) -> Result<()> {
         info!(
@@ -440,7 +464,7 @@ impl BackfillWorker {
     }
 
     /// Connect to a peer and process ticks from current_tick onwards.
-    async fn connect_and_process(&self, current_tick: &mut u32) -> Result<()> {
+    async fn connect_and_process(&mut self, current_tick: &mut u32) -> Result<()> {
         let mut attempts = 0;
         while attempts < MAX_PEERS_PER_WORKER {
             let addr = match self.peer_manager.best_peer().await {
@@ -464,7 +488,7 @@ impl BackfillWorker {
     }
 
     /// Connect to a specific peer and process ticks.
-    async fn try_peer(&self, addr: SocketAddr, current_tick: &mut u32) -> Result<()> {
+    async fn try_peer(&mut self, addr: SocketAddr, current_tick: &mut u32) -> Result<()> {
         let mut stream = match tokio::time::timeout(
             self.config.tcp_timeout,
             TcpStream::connect(addr),
@@ -571,28 +595,23 @@ impl BackfillWorker {
 
     /// Decode a raw packet and publish to the appropriate NATS subject.
     ///
-    /// This reuses the same NATS subject structure as the main ingestion,
-    /// ensuring the processor picks up the data.
+    /// Reuses the stored publisher (fire-and-forget) for maximum throughput.
     async fn decode_and_publish(
-        &self,
+        &mut self,
         msg_type: u8,
         payload: &[u8],
         epoch: u16,
     ) -> Result<()> {
-        let js = async_nats::jetstream::new(self.nats.clone());
-        let mut publisher = NatsPublisher::from_context(js);
-        publisher.set_fire_and_forget(true); // max throughput during backfill
-
         match msg_type {
             8 => {
                 // BroadcastFutureTickData (tick data)
                 let tick = crate::decoders::decode_tick(payload)?;
-                publisher.publish_tick(epoch, &tick).await?;
+                self.publisher.publish_tick(epoch, &tick).await?;
             }
             24 => {
                 // BroadcastTransaction
                 let tx = crate::decoders::decode_transaction(payload)?;
-                publisher.publish_tx(epoch, &tx).await?;
+                self.publisher.publish_tx(epoch, &tx).await?;
             }
             _ => {
                 debug!("Worker {}: unhandled msg_type {msg_type} in backfill", self.worker_id);

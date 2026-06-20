@@ -138,7 +138,7 @@ impl Default for BackfillConfig {
     }
 }
 
-fn default_backfill_workers() -> usize { 4 }
+fn default_backfill_workers() -> usize { 0 } // 0 = auto-scale based on CPU cores
 
 #[derive(Debug, Deserialize)]
 struct ProcessorConfig {
@@ -419,13 +419,23 @@ async fn main() -> Result<()> {
 
     // Backfill client — runs in background when enabled, after main ingestion starts.
     let backfill_handle = if config.backfill.enabled {
+        // Auto-scale workers based on CPU cores if not explicitly set (workers=0 means auto)
+        let backfill_workers = if config.backfill.workers > 0 {
+            config.backfill.workers
+        } else {
+            // Backfill is I/O bound (TCP requests), so we want many workers.
+            // 2x CPU cores is a good default, capped at 32.
+            let auto_workers = (resources.cpu_cores * 2).clamp(4, 32);
+            info!("  Backfill: auto-scaled workers to {auto_workers} (based on {} CPU cores)", resources.cpu_cores);
+            auto_workers
+        };
         let backfill_config = qonduit_ingestion::backfill::BackfillConfig {
             node_addr: config.ingestion.node_addr.as_deref()
                 .and_then(|s| s.parse().ok()),
             bootstrap_addrs: config.ingestion.bootstrap_addrs.iter()
                 .filter_map(|s| s.parse().ok())
                 .collect(),
-            workers: config.backfill.workers,
+            workers: backfill_workers,
             start_tick: config.backfill.start_tick,
             end_tick: config.backfill.end_tick,
             tick_delay: Duration::from_millis(config.backfill.tick_delay_ms),
