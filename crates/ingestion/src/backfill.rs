@@ -255,9 +255,14 @@ impl BackfillClient {
         // Qubic nodes typically serve the current epoch (~2-3M ticks).
         // The skip-ahead logic handles missing ranges automatically.
         if start_tick == 0 {
-            // Use epoch intervals if available to find the epoch start tick
+            // Use epoch intervals if available to find the epoch start tick.
+            // For the current (live) epoch, the cached last_tick is stale because
+            // the tick keeps advancing. Find the most recent epoch whose start <= end_tick.
             let ranges = qonduit_core::epoch_intervals::get_epoch_ranges();
-            if let Some(current_range) = ranges.iter().find(|r| end_tick >= r.first_tick && end_tick <= r.last_tick) {
+            if let Some(current_range) = ranges.iter()
+                .filter(|r| end_tick >= r.first_tick)
+                .max_by_key(|r| r.first_tick)
+            {
                 start_tick = current_range.first_tick;
                 info!(
                     "Backfill: using epoch interval start_tick={start_tick} for epoch {} (end_tick={end_tick})",

@@ -80,7 +80,14 @@ impl NatsPublisher {
     /// Publish a tick to `Q.{epoch}.QONDUIT.TICK`.
     pub async fn publish_tick(&self, epoch: u16, tick: &TickData) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.TICK");
-        let payload = serde_json::to_vec(tick).context("Failed to serialize TickData")?;
+        // Strip large hex fields before NATS publish to stay under 1MB payload limit.
+        // Transaction digests (131KB raw -> 262KB hex) blow up the JSON size.
+        // These fields are stored directly in RocksDB by the decoder, not needed in NATS.
+        let mut slim = tick.clone();
+        slim.transaction_digests_hex.clear();
+        slim.contract_fees_hex.clear();
+        slim.signature_hex.clear();
+        let payload = serde_json::to_vec(&slim).context("Failed to serialize TickData")?;
         self.do_publish(&subject, payload.into()).await?;
         debug!("Published tick epoch={epoch}, tick={}", tick.tick);
         Ok(())
