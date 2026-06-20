@@ -33,6 +33,9 @@ pub struct Peer {
     pub last_failure: Option<Instant>,
     pub success_count: u32,
     pub failure_count: u32,
+    /// Number of times this peer has actually sent broadcast data (type 8, 24, etc.).
+    /// Nodes that never broadcast are deprioritized.
+    pub broadcast_count: u32,
 }
 
 impl Peer {
@@ -44,20 +47,27 @@ impl Peer {
             last_failure: None,
             success_count: 0,
             failure_count: 0,
+            broadcast_count: 0,
         }
     }
 
     /// Compute a selection score in [0.0, 1.0]. Higher is better.
     ///
-    /// - Unseen peers start at 0.5 (neutral).
-    /// - Success ratio drives the score toward 1.0 as successes accumulate.
-    /// - Recency is a tiebreaker (handled externally by `best_peer`).
+    /// - Peers that actually broadcast get a major boost (they're what we need).
+    /// - Success ratio is a baseline for non-broadcasting connections.
+    /// - Unseen peers start at 0.3 (below broadcast peers).
     fn score(&self) -> f64 {
+        if self.broadcast_count > 0 {
+            // Broadcast peers score 0.7-1.0 based on broadcast frequency
+            let broadcast_bonus = (self.broadcast_count as f64).min(10.0) / 10.0 * 0.3;
+            return 0.7 + broadcast_bonus;
+        }
         let total = self.success_count + self.failure_count;
         if total == 0 {
-            return 0.5;
+            return 0.3;
         }
-        self.success_count as f64 / total as f64
+        // Non-broadcasting peers max out at 0.5
+        self.success_count as f64 / total as f64 * 0.5
     }
 
     /// Whether this peer is eligible for pruning.
@@ -203,6 +213,18 @@ impl PeerManager {
         }
     }
 
+    /// Mark a peer as having sent broadcast data.
+    ///
+    /// This is the strongest positive signal — nodes that broadcast are
+    /// the ones we actually need for live ingestion.
+    pub async fn mark_broadcast(&self, addr: &SocketAddr) {
+        let mut peers = self.peers.write().await;
+        if let Some(peer) = peers.iter_mut().find(|p| p.addr == *addr) {
+            peer.broadcast_count = peer.broadcast_count.saturating_add(1);
+            peer.last_seen = Some(Instant::now());
+        }
+    }
+
     /// Mark a peer as successfully connected.
     pub async fn mark_success(&self, addr: &SocketAddr) {
         let mut peers = self.peers.write().await;
@@ -247,7 +269,7 @@ impl PeerManager {
 
         let mut candidates: Vec<&Peer> = peers
             .iter()
-            .filter(|p| p.score() >= 0.3)
+            .filter(|p| p.score() >= 0.2)
             .collect();
 
         if candidates.is_empty() {
@@ -329,14 +351,16 @@ mod tests {
     #[test]
     fn test_peer_score_zero_total() {
         let peer = Peer::new("127.0.0.1:21841".parse().unwrap());
-        assert!((peer.score() - 0.5).abs() < f64::EPSILON);
+        // Unseen peers with no history score 0.3
+        assert!((peer.score() - 0.3).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_peer_score_all_success() {
         let mut peer = Peer::new("127.0.0.1:21841".parse().unwrap());
         peer.success_count = 10;
-        assert!((peer.score() - 1.0).abs() < f64::EPSILON);
+        // Non-broadcasting peers max at 0.5
+        assert!((peer.score() - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -344,7 +368,16 @@ mod tests {
         let mut peer = Peer::new("127.0.0.1:21841".parse().unwrap());
         peer.success_count = 3;
         peer.failure_count = 7;
-        assert!((peer.score() - 0.3).abs() < f64::EPSILON);
+        // 0.5 * (3/10) = 0.15
+        assert!((peer.score() - 0.15).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_peer_score_broadcast() {
+        let mut peer = Peer::new("127.0.0.1:21841".parse().unwrap());
+        peer.broadcast_count = 5;
+        // Broadcast peers score 0.7 + 0.15 = 0.85
+        assert!((peer.score() - 0.85).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -411,7 +444,8 @@ mod tests {
         let peer = peers.iter().find(|p| p.addr == addr).unwrap();
         assert_eq!(peer.success_count, 2);
         assert_eq!(peer.failure_count, 1);
-        assert!((peer.score() - (2.0 / 3.0)).abs() < 1e-6);
+        // Non-broadcasting: 0.5 * (2/3) = 0.333...
+        assert!((peer.score() - (2.0 / 3.0 * 0.5)).abs() < 1e-6);
     }
 
     #[tokio::test]

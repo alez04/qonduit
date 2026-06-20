@@ -245,13 +245,19 @@ impl IngestionClient {
             // Enable TCP_NODELAY for low latency.
             let _ = stream.set_nodelay(true);
 
-            // Peer exchange handshake — fire-and-forget (no response expected).
+            // Peer exchange handshake — complete the handshake so the node
+            // starts broadcasting data to us.
             let local_peers: [[u8; 4]; 4] = [[0, 0, 0, 0]; 4];
-            if let Err(e) = protocol::exchange_public_peers(&mut stream, &local_peers).await {
-                warn!("Peer exchange with {addr} failed: {e:#}");
-                self.peer_manager.mark_failure(&addr).await;
-                continue;
-            }
+            let remote_peers = match protocol::exchange_public_peers(&mut stream, &local_peers).await {
+                Ok(peers) => peers,
+                Err(e) => {
+                    warn!("Peer exchange with {addr} failed: {e:#}");
+                    self.peer_manager.mark_failure(&addr).await;
+                    continue;
+                }
+            };
+            // Add discovered peers from the node's response
+            self.peer_manager.add_peers_from_exchange(&remote_peers).await;
 
             // Mark the peer as healthy immediately after successful handshake.
             self.peer_manager.mark_success(&addr).await;
@@ -383,6 +389,9 @@ impl IngestionClient {
                             broadcast_since_last_stats += 1;
                             last_broadcast = Instant::now();
 
+                            // Track that this peer actually broadcasts data
+                            self.peer_manager.mark_broadcast(&addr).await;
+
                             if let Err(e) = self
                                 .decoder
                                 .decode_and_publish(msg_type, dejavu, &payload, self.current_epoch)
@@ -390,6 +399,8 @@ impl IngestionClient {
                             {
                                 warn!("Decode/publish error for type {msg_type}: {e:#}");
                                 PACKETS_DECODE_ERRORS.inc();
+                            } else {
+                                published_since_last_stats += 1;
                             }
                         }
                         Err(e) => {

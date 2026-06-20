@@ -66,7 +66,7 @@ pub struct PipelineState {
     /// Total tick data items discovered by the backfill process.
     pub backfill_ticks_discovered: AtomicU64,
     /// Ticks that failed during backfill.
-    pub backfill_ticks_failed: AtomicU32,
+    pub backfill_ticks_failed: AtomicU64,
     /// Backfill start tick.
     pub backfill_start_tick: AtomicU32,
     /// Backfill end tick.
@@ -125,7 +125,7 @@ pub struct PipelineStatusResponse {
     /// Total tick data items discovered by backfill.
     pub backfill_ticks_discovered: u64,
     /// Ticks that failed during backfill.
-    pub backfill_ticks_failed: u32,
+    pub backfill_ticks_failed: u64,
     /// Backfill start tick.
     pub backfill_start_tick: u32,
     /// Backfill end tick.
@@ -162,7 +162,7 @@ impl PipelineState {
             backfill_ticks_completed: AtomicU64::new(0),
             backfill_txs_discovered: AtomicU64::new(0),
             backfill_ticks_discovered: AtomicU64::new(0),
-            backfill_ticks_failed: AtomicU32::new(0),
+            backfill_ticks_failed: AtomicU64::new(0),
             backfill_start_tick: AtomicU32::new(0),
             backfill_end_tick: AtomicU32::new(0),
             started_at: Instant::now(),

@@ -22,6 +22,15 @@ use crate::nats_publish::NatsPublisher;
 use crate::peer_manager::PeerManager;
 use crate::protocol;
 
+/// Maximum consecutive tick-data failures before skipping ahead.
+/// Qubic nodes only serve recent ticks from the current epoch. When we
+/// hit this many EndResponses in a row, we know the node doesn't have
+/// this range and skip forward to avoid wasting TCP round-trips.
+const MAX_CONSECUTIVE_FAILURES: u32 = 50;
+
+/// How far to skip forward after hitting consecutive failures.
+const FAILURE_SKIP_SIZE: u32 = 10_000;
+
 /// Maximum number of peers to try per worker connection cycle.
 const MAX_PEERS_PER_WORKER: usize = 8;
 
@@ -75,8 +84,9 @@ struct BackfillShared {
     pub txs_discovered: AtomicU64,
     /// Total tick data items discovered.
     pub ticks_discovered: AtomicU64,
-    /// Ticks that failed (not found or error).
-    pub ticks_failed: AtomicU32,
+    /// Ticks that failed (not found or error). u64 to prevent overflow during
+    /// full-epoch scans where most ticks are unavailable on the node.
+    pub ticks_failed: AtomicU64,
     /// The resolved start tick.
     pub start_tick: AtomicU32,
     /// The resolved end tick.
@@ -92,7 +102,7 @@ impl BackfillShared {
             ticks_completed: AtomicU64::new(0),
             txs_discovered: AtomicU64::new(0),
             ticks_discovered: AtomicU64::new(0),
-            ticks_failed: AtomicU32::new(0),
+            ticks_failed: AtomicU64::new(0),
             start_tick: AtomicU32::new(0),
             end_tick: AtomicU32::new(0),
             processed_ticks: Mutex::new(HashSet::new()),
@@ -135,7 +145,7 @@ impl BackfillHandle {
     }
 
     /// Ticks that failed.
-    pub fn ticks_failed(&self) -> u32 {
+    pub fn ticks_failed(&self) -> u64 {
         self.shared.ticks_failed.load(Ordering::Relaxed)
     }
 
@@ -504,7 +514,8 @@ impl BackfillWorker {
 
         // Peer exchange handshake
         let local_peers: [[u8; 4]; 4] = [[0, 0, 0, 0]; 4];
-        protocol::exchange_public_peers(&mut stream, &local_peers).await?;
+        let remote_peers = protocol::exchange_public_peers(&mut stream, &local_peers).await?;
+        self.peer_manager.add_peers_from_exchange(&remote_peers).await;
 
         self.peer_manager.mark_success(&addr).await;
 
@@ -523,10 +534,27 @@ impl BackfillWorker {
 
         // Process each tick in our range
         let mut tick = *current_tick;
+        let mut consecutive_failures: u32 = 0;
+
         while tick < self.worker_end {
             // Check if another worker already claimed this tick
             if !self.shared.claim_tick(tick) {
                 tick += 1;
+                consecutive_failures = 0;
+                continue;
+            }
+
+            // Skip ahead if we've hit too many consecutive failures.
+            // This happens when scanning into tick ranges the node doesn't have
+            // (e.g. early epoch ticks that were pruned long ago).
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                let skip_to = (tick + FAILURE_SKIP_SIZE).min(self.worker_end);
+                info!(
+                    "Worker {}: skipping tick {tick}..{skip_to} ({} consecutive failures, node doesn't have this range)",
+                    self.worker_id, consecutive_failures
+                );
+                tick = skip_to;
+                consecutive_failures = 0;
                 continue;
             }
 
@@ -534,6 +562,7 @@ impl BackfillWorker {
             let tick_data_result = protocol::request_tick_data(&mut stream, tick).await;
             match tick_data_result {
                 Ok(data) => {
+                    consecutive_failures = 0; // reset on success
                     // Decode and publish tick data
                     if let Err(e) = self
                         .decode_and_publish(8, &data, epoch)
@@ -545,8 +574,10 @@ impl BackfillWorker {
                     }
                 }
                 Err(e) => {
-                    debug!("Worker {}: no tick data for {tick}: {e:#}", self.worker_id);
-                    // Tick data not available — mark as failed but continue
+                    consecutive_failures += 1;
+                    if consecutive_failures <= 3 {
+                        debug!("Worker {}: no tick data for {tick}: {e:#}", self.worker_id);
+                    }
                     self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
                     tick += 1;
                     continue;
