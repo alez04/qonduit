@@ -140,7 +140,7 @@ fn qubic_date_to_unix(year: u32, month: u8, day: u8, hour: u8, minute: u8, secon
 }
 
 fn is_leap_year(year: u32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 /// Decode a BroadcastTransaction payload (80 + input_size + 64 bytes).
