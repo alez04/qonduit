@@ -71,14 +71,33 @@ pub struct WarmStorage {
 impl WarmStorage {
     /// Open the database at the given path, creating column families as needed.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_resources(path, None)
+    }
+
+    /// Open with explicit resource parameters for optimal performance.
+    pub fn open_with_resources(
+        path: &Path,
+        resources: Option<&qonduit_core::system::SystemResources>,
+    ) -> Result<Self> {
+        let write_buffer_size = resources
+            .map(|r| r.rocksdb_write_buffer_size)
+            .unwrap_or(64 * 1024 * 1024);
+        let max_write_buffers = resources
+            .map(|r| r.rocksdb_max_write_buffers)
+            .unwrap_or(4);
+
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
         opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
-        opts.set_write_buffer_size(64 * 1024 * 1024); // 64 MB
-        opts.set_max_write_buffer_number(4);
-        opts.set_target_file_size_base(64 * 1024 * 1024);
-        opts.set_max_open_files(1024);
+        opts.set_write_buffer_size(write_buffer_size);
+        opts.set_max_write_buffer_number(max_write_buffers);
+        opts.set_target_file_size_base(write_buffer_size as u64);
+        opts.set_max_open_files(2048);
+        // Level compaction tuning for write-heavy workloads
+        opts.set_level_compaction_dynamic_level_bytes(true);
+        opts.set_bytes_per_sync(16 * 1024 * 1024); // 16MB sync interval
+        opts.set_compaction_readahead_size(2 * 1024 * 1024); // 2MB compaction readahead
 
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = ALL_CFS
             .iter()
@@ -92,7 +111,12 @@ impl WarmStorage {
         let db = DB::open_cf_descriptors(&opts, path, cf_descriptors)
             .context("Failed to open RocksDB")?;
 
-        info!(path = %path.display(), "Opened warm storage");
+        info!(
+            path = %path.display(),
+            write_buffer_mb = write_buffer_size / (1024 * 1024),
+            max_write_buffers = max_write_buffers,
+            "Opened warm storage (auto-tuned for performance)"
+        );
         Ok(Self { db: Arc::new(db) })
     }
 

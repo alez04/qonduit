@@ -148,11 +148,14 @@ struct ProcessorConfig {
     /// Number of messages per fetch batch (defaults to 10 for live, 100 for catch-up).
     #[serde(default)]
     batch_size: Option<usize>,
+    /// Max concurrent message handlers per stream consumer.
+    #[serde(default)]
+    concurrency: Option<usize>,
 }
 
 impl Default for ProcessorConfig {
     fn default() -> Self {
-        Self { catch_up: true, batch_size: None }
+        Self { catch_up: true, batch_size: None, concurrency: None }
     }
 }
 
@@ -232,6 +235,11 @@ async fn main() -> Result<()> {
             config.processor.batch_size = Some(n);
         }
     }
+    if let Ok(v) = std::env::var("QONDUIT_CONCURRENCY") {
+        if let Ok(n) = v.parse::<usize>() {
+            config.processor.concurrency = Some(n);
+        }
+    }
 
     info!("Qonduit v{} starting...", env!("CARGO_PKG_VERSION"));
     info!("  NATS: {}", config.nats.url);
@@ -240,15 +248,24 @@ async fn main() -> Result<()> {
     let node_str = config.ingestion.node_addr.as_deref().unwrap_or("");
     info!("  Node: {}", if node_str.is_empty() { "(none - query-only)" } else { node_str });
     info!("  Bootstrap: {:?}", config.ingestion.bootstrap_addrs);
-    info!("  Processor: catch_up={}, batch_size={:?}", config.processor.catch_up, config.processor.batch_size);
+
+    // --- Auto-detect system resources for optimal tuning ---
+    let resources = qonduit_core::system::SystemResources::detect_with_overrides(
+        config.processor.batch_size,
+        config.processor.concurrency,
+    );
+    info!("  Processor: catch_up={}, batch_size={}, concurrency={}", config.processor.catch_up, resources.batch_size, resources.concurrency);
     if config.backfill.enabled {
         info!("  Backfill: enabled, workers={}, start_tick={}, end_tick={}, tick_delay={}ms",
             config.backfill.workers, config.backfill.start_tick, config.backfill.end_tick, config.backfill.tick_delay_ms);
     }
 
     // --- Phase 1: Storage (warm tier + hot cache) ---
-    let warm_storage = qonduit_storage::WarmStorage::open(&config.storage.data_dir)
-        .context("Failed to open warm storage")?;
+    let warm_storage = qonduit_storage::WarmStorage::open_with_resources(
+        &config.storage.data_dir,
+        Some(&resources),
+    )
+    .context("Failed to open warm storage")?;
     let _hot_cache = qonduit_storage::HotCache::new(1_000, 10_000);
     info!("Storage initialized (warm tier + hot cache)");
 
@@ -323,9 +340,8 @@ async fn main() -> Result<()> {
         let processor_config = qonduit_processor::ProcessorConfig {
             consumer_group: "qonduit-processors".to_string(),
             catch_up: config.processor.catch_up,
-            batch_size: config.processor.batch_size.unwrap_or(
-                if config.processor.catch_up { 100 } else { 10 },
-            ),
+            batch_size: resources.batch_size,
+            concurrency: resources.concurrency,
         };
         tokio::spawn(async move {
             tokio::select! {

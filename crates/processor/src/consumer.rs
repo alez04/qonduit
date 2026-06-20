@@ -6,51 +6,11 @@ use anyhow::Result;
 use async_nats::jetstream::{self, consumer::DeliverPolicy};
 use async_nats::jetstream::consumer::PullConsumer;
 use async_nats::Client as NatsClient;
-use futures_util::StreamExt;
+use futures_util::stream::{StreamExt, FuturesUnordered};
 use qonduit_core::PipelineState;
 use tracing::{debug, error, info, warn};
 
 use crate::indexer::Indexer;
-
-/// Read available memory from `/proc/meminfo` on Linux.
-/// Returns megabytes. Falls back to 4096 if unable to read.
-fn available_memory_mb() -> u64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("MemAvailable:"))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .and_then(|v| v.parse().ok())
-                .map(|kb: u64| kb / 1024)
-        })
-        .unwrap_or(4096) // default 4GB if can't read
-}
-
-/// Dynamically calculate batch size based on pending message count and available memory.
-fn calculate_batch(base_batch: usize, pending: u64, mem_mb: u64) -> usize {
-    // Pending-based scaling
-    let pending_batch = if pending > 10_000 {
-        base_batch * 10 // Large catch-up: bigger batches
-    } else if pending > 1_000 {
-        base_batch * 5
-    } else if pending > 100 {
-        base_batch * 2
-    } else {
-        base_batch // Near live: small batches
-    };
-
-    // Memory-aware adjustment
-    if mem_mb < 1_024 {
-        // Low memory: halve the batch size, minimum 1
-        std::cmp::max(pending_batch / 2, 1)
-    } else if mem_mb > 8_192 {
-        // High memory: double the batch size
-        pending_batch * 2
-    } else {
-        pending_batch
-    }
-}
 
 pub struct Consumer {
     nats: NatsClient,
@@ -58,6 +18,7 @@ pub struct Consumer {
     pipeline: Arc<PipelineState>,
     catch_up: bool,
     batch_size: usize,
+    concurrency: usize,
 }
 
 impl Consumer {
@@ -67,6 +28,7 @@ impl Consumer {
         pipeline: Arc<PipelineState>,
         catch_up: bool,
         batch_size: usize,
+        concurrency: usize,
     ) -> Self {
         Self {
             nats,
@@ -74,6 +36,7 @@ impl Consumer {
             pipeline,
             catch_up,
             batch_size,
+            concurrency,
         }
     }
 
@@ -92,6 +55,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::Tick,
             )),
             tokio::spawn(Self::consume_stream(
@@ -103,6 +67,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::Tx,
             )),
             tokio::spawn(Self::consume_stream(
@@ -114,6 +79,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::Entity,
             )),
             tokio::spawn(Self::consume_stream(
@@ -125,6 +91,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -136,6 +103,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -147,6 +115,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -158,6 +127,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -169,6 +139,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -180,6 +151,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -191,6 +163,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
             tokio::spawn(Self::consume_stream(
@@ -202,6 +175,7 @@ impl Consumer {
                 pipeline.clone(),
                 self.catch_up,
                 self.batch_size,
+                self.concurrency,
                 StreamLag::None,
             )),
         ];
@@ -224,10 +198,11 @@ impl Consumer {
         pipeline: Arc<PipelineState>,
         catch_up: bool,
         batch_size: usize,
+        concurrency: usize,
         lag_target: StreamLag,
     ) where
-        F: Fn(Vec<u8>, Indexer) -> Fut,
-        Fut: std::future::Future<Output = Result<()>>,
+        F: Fn(Vec<u8>, Indexer) -> Fut + Sync + Send + 'static,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         // Get or create the stream
         let stream = match js.get_stream(stream_name).await {
@@ -280,16 +255,14 @@ impl Consumer {
         };
 
         // Get initial pending count and calculate dynamic batch size
-        let mem_mb = available_memory_mb();
         let initial_pending = consumer
             .info()
             .await
             .map(|info| info.num_pending)
             .unwrap_or(0);
 
-        let dynamic_batch = calculate_batch(batch_size, initial_pending, mem_mb);
         info!(
-            "Consuming {stream_name} as {durable_name} (catch_up={catch_up}, base_batch={batch_size}, dynamic_batch={dynamic_batch}, pending={initial_pending}, mem_mb={mem_mb})"
+            "Consuming {stream_name} as {durable_name} (catch_up={catch_up}, batch={batch_size}, concurrency={concurrency}, pending={initial_pending})"
         );
 
         // Log initial pending count so we can see catch-up progress
@@ -302,10 +275,11 @@ impl Consumer {
         }
 
         let mut consumer = consumer;
-        let mut current_batch = dynamic_batch;
+        let mut current_batch = batch_size;
+        let handler = Arc::new(handler);
 
         loop {
-            let mut messages = match consumer
+            let messages = match consumer
                 .fetch()
                 .max_messages(current_batch)
                 .expires(std::time::Duration::from_secs(5))
@@ -320,32 +294,65 @@ impl Consumer {
                 }
             };
 
-            // Process messages sequentially. The main throughput gains come from
-            // WriteBatch (RocksDB) and fire-and-forget (NATS publish) optimizations.
-            while let Some(msg) = messages.next().await {
-                match msg {
-                    Ok(msg) => {
-                        let payload = msg.payload.to_vec();
-                        if let Err(e) = handler(payload, indexer.clone()).await {
-                            warn!("Handler error on {stream_name} (acking): {e}");
-                            let _ = msg.ack().await;
-                        } else {
-                            let _ = msg.ack().await;
-                        }
-                    }
+            // Collect the batch into owned messages, then process concurrently.
+            // This avoids higher-ranked lifetime issues with stream combinators.
+            let mut batch_items: Vec<_> = Vec::with_capacity(current_batch);
+            futures_util::pin_mut!(messages);
+            while let Some(msg_result) = messages.next().await {
+                match msg_result {
+                    Ok(msg) => batch_items.push(msg),
                     Err(e) => {
                         warn!("Message error on {stream_name}: {e}");
                     }
                 }
             }
 
-            // Update lag metrics and recalculate dynamic batch size
+            if batch_items.is_empty() {
+                // No messages available, brief pause before next fetch
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+
+            // Process the batch concurrently using FuturesUnordered.
+            // Each message handler runs independently, up to `concurrency` at once.
+            let mut futs: FuturesUnordered<_> = FuturesUnordered::new();
+
+            for msg in batch_items {
+                let handler = handler.clone();
+                let indexer = indexer.clone();
+                futs.push(async move {
+                    let payload = msg.payload.to_vec();
+                    let result = handler(payload, indexer).await;
+                    (msg, result)
+                });
+            }
+
+            while let Some((msg, result)) = futs.next().await {
+                match result {
+                    Ok(()) => {
+                        let _ = msg.ack().await;
+                    }
+                    Err(e) => {
+                        warn!("Handler error on {stream_name} (acking): {e}");
+                        let _ = msg.ack().await;
+                    }
+                }
+            }
+
+            // Update lag metrics and dynamically adjust batch size
             match consumer.info().await {
                 Ok(info) => {
                     let pending = info.num_pending;
 
-                    // Recalculate batch size based on current pending count and memory
-                    current_batch = calculate_batch(batch_size, pending, mem_mb);
+                    // Scale batch size up when far behind, down when near live
+                    current_batch = if pending > 10_000 {
+                        batch_size * 10
+                    } else if pending > 1_000 {
+                        batch_size * 5
+                    } else if pending > 100 {
+                        batch_size * 2
+                    } else {
+                        batch_size
+                    };
 
                     if lag_target != StreamLag::None {
                         match lag_target {

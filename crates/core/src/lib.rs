@@ -14,6 +14,7 @@ pub mod identity;
 pub mod message_type;
 pub mod pipeline;
 pub mod structs;
+pub mod system;
 
 pub use constants::*;
 pub use error::QonduitError;
