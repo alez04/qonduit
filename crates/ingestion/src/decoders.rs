@@ -62,6 +62,16 @@ pub fn decode_tick(payload: &[u8]) -> Result<TickData> {
     let epoch = u16::from_le_bytes([payload[2], payload[3]]);
     let tick = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
 
+    // Validate decoded values to reject corrupted/misaligned payloads.
+    // Epochs are sequential (~218 as of mid-2026), computor indices are 0-675,
+    // and ticks are ~60M for current epoch. Generous bounds catch garbage data.
+    if epoch > 1000 {
+        anyhow::bail!("Invalid epoch {epoch} (likely corrupted payload)");
+    }
+    if computor_index > 1000 {
+        anyhow::bail!("Invalid computor_index {computor_index} (likely corrupted payload)");
+    }
+
     // --- Timestamp fields (offset 8-15) ---
     let _millisecond = u16::from_le_bytes([payload[8], payload[9]]);
     let second = payload[10];

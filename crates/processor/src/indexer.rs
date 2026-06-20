@@ -68,13 +68,23 @@ impl Indexer {
         let tick: TickData =
             serde_json::from_slice(payload).context("Failed to deserialize TickData")?;
 
+        // Validate epoch is reasonable (not garbage from a corrupted payload)
+        if tick.epoch > 1000 {
+            debug!(epoch = tick.epoch, tick = tick.tick, "Rejecting tick with invalid epoch");
+            return Ok(());
+        }
+
         // Batch write: tick data + meta update in a single disk write
         let mut batch = self.storage.create_batch();
         self.storage.batch_put_tick(&mut batch, tick.tick, tick.epoch, payload);
 
-        // Detect epoch transition before updating pipeline state
+        // Detect epoch transition before updating pipeline state.
+        // Only trigger on epoch changes that are exactly +1 (normal progression).
+        // Larger jumps indicate corrupted data, not a real transition.
         let previous_epoch = self.pipeline.indexed_epoch.load(std::sync::atomic::Ordering::Relaxed);
-        if previous_epoch > 0 && tick.epoch != previous_epoch {
+        if previous_epoch > 0 && tick.epoch != previous_epoch
+            && tick.epoch == previous_epoch + 1
+        {
             tracing::warn!(
                 epoch_transition = true,
                 from_epoch = previous_epoch,
