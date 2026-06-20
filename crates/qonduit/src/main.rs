@@ -173,10 +173,13 @@ async fn main() -> Result<()> {
     }
 
     // --- Phase 3: Build shared state ---
+    let pipeline = Arc::new(qonduit_core::PipelineState::new());
+
     // Clone WarmStorage for AppState (RocksDB DB uses Arc internally, so clone is cheap)
     let app_state = Arc::new(qonduit_query::AppState {
         storage: warm_storage.clone(),
         nats: nats.clone(),
+        pipeline: pipeline.clone(),
     });
     let warm_storage = Arc::new(warm_storage);
 
@@ -221,12 +224,14 @@ async fn main() -> Result<()> {
     let processor_handle = {
         let storage = warm_storage.clone();
         let nats = nats.clone();
+        let pipeline = pipeline.clone();
         tokio::spawn(async move {
             tokio::select! {
                 result = qonduit_processor::run(
                     qonduit_processor::ProcessorConfig::default(),
                     nats,
                     storage,
+                    pipeline,
                 ) => {
                     if let Err(e) = result {
                         tracing::error!("Processor error: {e:#}");
@@ -242,6 +247,7 @@ async fn main() -> Result<()> {
     // Ingestion client — always runs (peer discovery finds nodes automatically).
     // Set QONDUIT_NODE_ADDR=disabled to skip ingestion (query-only mode).
     let ingestion_disabled = config.ingestion.node_addr.as_deref() == Some("disabled");
+    pipeline.ingestion_disabled.store(ingestion_disabled, std::sync::atomic::Ordering::Relaxed);
     let ingestion_handle = if ingestion_disabled {
         info!("Ingestion disabled via config, running in query-only mode");
         None
@@ -273,10 +279,12 @@ async fn main() -> Result<()> {
         }
 
         let nats = nats.clone();
+        let pipeline = pipeline.clone();
         Some(tokio::spawn(async move {
             let mut client = qonduit_ingestion::IngestionClient::new(
                 ingestion_config,
                 nats,
+                pipeline,
             );
             tokio::select! {
                 result = client.run() => {

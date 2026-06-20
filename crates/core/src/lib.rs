@@ -11,6 +11,7 @@ pub mod hash;
 pub mod header;
 pub mod identity;
 pub mod message_type;
+pub mod pipeline;
 pub mod structs;
 
 pub use constants::*;
@@ -20,4 +21,5 @@ pub use hash::*;
 pub use header::RequestResponseHeader;
 pub use identity::*;
 pub use message_type::NetworkMessageType;
+pub use pipeline::{PipelineState, PipelineStatusResponse};
 pub use structs::*;

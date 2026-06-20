@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_nats::Client as NatsClient;
+use qonduit_core::PipelineState;
 use tracing::info;
 
 use consumer::Consumer;
@@ -33,10 +34,11 @@ pub async fn run(
     config: ProcessorConfig,
     nats: NatsClient,
     storage: Arc<qonduit_storage::WarmStorage>,
+    pipeline: Arc<PipelineState>,
 ) -> Result<()> {
     info!("Starting processor (group: {})...", config.consumer_group);
 
-    let indexer = Indexer::new(storage);
+    let indexer = Indexer::new(storage, pipeline);
     let consumer = Consumer::new(nats, indexer);
     consumer.run().await
 }

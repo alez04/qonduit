@@ -22,6 +22,7 @@ use tracing::info;
 pub struct AppState {
     pub storage: qonduit_storage::WarmStorage,
     pub nats: NatsClient,
+    pub pipeline: std::sync::Arc<qonduit_core::PipelineState>,
 }
 
 /// Configuration for the query server.

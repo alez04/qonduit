@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_nats::Client as NatsClient;
+use qonduit_core::PipelineState;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
@@ -95,13 +96,14 @@ pub struct IngestionClient {
     config: IngestionConfig,
     decoder: PacketDecoder,
     peer_manager: Arc<PeerManager>,
+    pipeline: Arc<PipelineState>,
     current_epoch: u16,
     current_tick: u32,
 }
 
 impl IngestionClient {
-    /// Create a new client from config and NATS connection.
-    pub fn new(config: IngestionConfig, nats: NatsClient) -> Self {
+    /// Create a new client from config, NATS connection, and shared pipeline state.
+    pub fn new(config: IngestionConfig, nats: NatsClient, pipeline: Arc<PipelineState>) -> Self {
         let mut bootstrap: Vec<SocketAddr> = config.bootstrap_addrs.clone();
         if let Some(addr) = config.node_addr {
             if !bootstrap.contains(&addr) {
@@ -115,6 +117,7 @@ impl IngestionClient {
             config,
             decoder: PacketDecoder::new(nats),
             peer_manager,
+            pipeline,
             current_epoch: 0,
             current_tick: 0,
         }
@@ -162,6 +165,11 @@ impl IngestionClient {
                     error!("Ingestion cycle error: {e:#}");
                 }
             }
+
+            // Mark as disconnected when the connection drops.
+            self.pipeline
+                .ingestion_connected
+                .store(false, std::sync::atomic::Ordering::Relaxed);
 
             // Periodically prune stale peers.
             self.peer_manager.prune_stale().await;
@@ -228,6 +236,7 @@ impl IngestionClient {
             // Mark the peer as healthy immediately after successful handshake.
             self.peer_manager.mark_success(&addr).await;
             info!("Connected and authenticated with {addr}");
+            self.pipeline.ingestion_connected.store(true, std::sync::atomic::Ordering::Relaxed);
             PEER_COUNT.set(self.peer_manager.peer_count().await as i64);
 
             // Request current tick info to bootstrap epoch/tick state.
@@ -243,6 +252,8 @@ impl IngestionClient {
                     info!("Current state: epoch={epoch}, tick={tick}");
                     self.current_epoch = epoch;
                     self.current_tick = tick;
+                    self.pipeline.node_tick.store(tick, std::sync::atomic::Ordering::Relaxed);
+                    self.pipeline.node_epoch.store(epoch, std::sync::atomic::Ordering::Relaxed);
                     metrics::CURRENT_EPOCH.set(epoch as i64);
                     metrics::CURRENT_TICK.set(tick as i64);
                 }
@@ -290,6 +301,8 @@ impl IngestionClient {
                                     info!("Tick updated: epoch={epoch}, tick={tick}");
                                     self.current_epoch = epoch;
                                     self.current_tick = tick;
+                                    self.pipeline.node_tick.store(tick, std::sync::atomic::Ordering::Relaxed);
+                                    self.pipeline.node_epoch.store(epoch, std::sync::atomic::Ordering::Relaxed);
                                     metrics::CURRENT_EPOCH.set(epoch as i64);
                                     metrics::CURRENT_TICK.set(tick as i64);
                                 }

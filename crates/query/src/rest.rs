@@ -88,31 +88,15 @@ async fn health() -> impl IntoResponse {
 
 async fn system_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     crate::metrics::REST_REQUESTS.inc();
-    let tick = match state.storage.get_current_tick() {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to read current tick: {e}")})),
-            )
-                .into_response();
-        }
-    };
-    let epoch = match state.storage.get_current_epoch() {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Failed to read current epoch: {e}")})),
-            )
-                .into_response();
-        }
-    };
-    let info = serde_json::json!({
-        "currentTick": tick,
-        "currentEpoch": epoch,
-        "version": env!("CARGO_PKG_VERSION"),
-    });
+
+    // Take a snapshot of the pipeline status.
+    let pipeline = state.pipeline.status();
+
+    // Merge with storage-sourced data and version info.
+    let mut info = serde_json::to_value(&pipeline).unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = info.as_object_mut() {
+        obj.insert("version".to_string(), serde_json::json!(env!("CARGO_PKG_VERSION")));
+    }
     Json(info).into_response()
 }
 

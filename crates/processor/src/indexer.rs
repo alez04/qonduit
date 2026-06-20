@@ -6,18 +6,19 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use qonduit_core::{AssetRecord, Computors, ContractIpo, EntityData, TickData, Transaction};
+use qonduit_core::{AssetRecord, Computors, ContractIpo, EntityData, PipelineState, TickData, Transaction};
 use qonduit_storage::WarmStorage;
 use tracing::debug;
 
 #[derive(Clone)]
 pub struct Indexer {
     storage: Arc<WarmStorage>,
+    pipeline: Arc<PipelineState>,
 }
 
 impl Indexer {
-    pub fn new(storage: Arc<WarmStorage>) -> Self {
-        Self { storage }
+    pub fn new(storage: Arc<WarmStorage>, pipeline: Arc<PipelineState>) -> Self {
+        Self { storage, pipeline }
     }
 
     // ------------------------------------------------------------------
@@ -40,6 +41,11 @@ impl Indexer {
 
         // Always update epoch
         self.storage.set_current_epoch(tick.epoch)?;
+
+        // Update pipeline state
+        self.pipeline.indexed_tick.store(tick.tick, std::sync::atomic::Ordering::Relaxed);
+        self.pipeline.indexed_epoch.store(tick.epoch, std::sync::atomic::Ordering::Relaxed);
+        self.pipeline.ticks_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         debug!(tick = tick.tick, epoch = tick.epoch, "Indexed tick");
         Ok(())
@@ -97,6 +103,10 @@ impl Indexer {
         }
 
         debug!(tick = tx.tick, hash = %tx.hash, "Indexed transaction");
+
+        // Update pipeline state
+        self.pipeline.txs_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -111,6 +121,10 @@ impl Indexer {
 
         if let Some(key) = qonduit_core::decode_base26(&entity.identity) {
             self.storage.put_entity(&key, payload)?;
+
+            // Update pipeline state
+            self.pipeline.entities_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
             debug!(identity = %entity.identity, "Indexed entity");
         }
 
