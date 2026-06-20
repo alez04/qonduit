@@ -6,13 +6,13 @@
 //! partitions the tick range across N workers, each with its own TCP connection,
 //! and feeds decoded events through the same NATS pipeline.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_nats::Client as NatsClient;
 use qonduit_core::PipelineState;
 use tokio::net::TcpStream;
@@ -28,8 +28,9 @@ use crate::protocol;
 /// this range and skip forward to avoid wasting TCP round-trips.
 const MAX_CONSECUTIVE_FAILURES: u32 = 50;
 
-/// Timeout for reading a single pipelined response.
-const PIPELINE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Pipeline depth: number of tick data requests to keep in-flight simultaneously.
+/// Overlaps network round-trips for dramatically higher throughput.
+const PIPELINE_DEPTH: usize = 20;
 
 /// Initial skip size when hitting consecutive failures. Grows exponentially
 /// on repeated skips (10K -> 20K -> 40K -> ... -> 1M max).
@@ -46,10 +47,6 @@ const WORKER_RECONNECT_DELAY: Duration = Duration::from_secs(3);
 
 /// Progress reporting interval.
 const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(30);
-
-/// Pipeline depth: number of tick data requests to keep in-flight simultaneously.
-/// Overlaps network round-trips for dramatically higher throughput.
-const PIPELINE_DEPTH: usize = 16;
 
 /// Configuration for the backfill client.
 #[derive(Debug, Clone)]
@@ -521,12 +518,65 @@ impl BackfillWorker {
         anyhow::bail!("Exhausted all peers after {attempts} attempts")
     }
 
+    /// Fill the pipeline with tick data requests up to PIPELINE_DEPTH in-flight.
+    ///
+    /// Skips ticks already claimed by other workers and applies the
+    /// consecutive-failure skip logic when the node lacks data.
+    async fn fill_pipeline(
+        shared: &BackfillShared,
+        worker_id: usize,
+        worker_end: u32,
+        stream: &mut TcpStream,
+        next_tick_to_request: &mut u32,
+        pending_tick_data: &mut u32,
+        consecutive_failures: &mut u32,
+        skip_size: &mut u32,
+    ) -> Result<()> {
+        while *next_tick_to_request < worker_end
+            && *pending_tick_data < PIPELINE_DEPTH as u32
+        {
+            // Check if another worker already claimed this tick
+            if !shared.claim_tick(*next_tick_to_request) {
+                *next_tick_to_request += 1;
+                continue;
+            }
+
+            // Skip ahead if we've hit too many consecutive failures.
+            // This happens when scanning into tick ranges the node doesn't have
+            // (e.g. early epoch ticks that were pruned long ago).
+            // Skip size doubles each time to cross large gaps quickly.
+            if *consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                let skip_to = (*next_tick_to_request + *skip_size).min(worker_end);
+                info!(
+                    "Worker {}: skipping tick {}..{} ({} ticks, {} consecutive failures)",
+                    worker_id, *next_tick_to_request, skip_to, *skip_size, *consecutive_failures
+                );
+                *next_tick_to_request = skip_to;
+                *consecutive_failures = 0;
+                *skip_size = (*skip_size * 2).min(FAILURE_SKIP_MAX);
+                continue;
+            }
+
+            protocol::send_raw(
+                stream,
+                16,
+                &(*next_tick_to_request).to_le_bytes(),
+                rand::random(),
+            )
+            .await?;
+            *pending_tick_data += 1;
+            *next_tick_to_request += 1;
+        }
+        Ok(())
+    }
+
     /// Connect to a specific peer and process ticks using request pipelining.
     ///
-    /// Instead of sending one request and waiting for the response, we send
-    /// PIPELINE_DEPTH requests ahead and read responses as they arrive.
-    /// This overlaps network latency with processing, achieving 10-50x
-    /// throughput improvement over sequential processing.
+    /// Instead of sending one request and waiting for the response, we keep
+    /// PIPELINE_DEPTH requests in-flight simultaneously. As tick data responses
+    /// arrive, we send transaction requests and new tick data requests to keep
+    /// the pipeline full. This overlaps network latency with processing for
+    /// dramatically higher throughput.
     async fn try_peer(&mut self, addr: SocketAddr, current_tick: &mut u32) -> Result<()> {
         let mut stream = match tokio::time::timeout(
             self.config.tcp_timeout,
@@ -550,9 +600,7 @@ impl BackfillWorker {
 
         // Request current tick info to get epoch
         let epoch = match protocol::request_current_tick_info(&mut stream).await {
-            Ok(data) if data.len() >= 4 => {
-                u16::from_le_bytes([data[2], data[3]])
-            }
+            Ok(data) if data.len() >= 4 => u16::from_le_bytes([data[2], data[3]]),
             _ => self.pipeline.node_epoch.load(Ordering::Relaxed),
         };
 
@@ -561,170 +609,173 @@ impl BackfillWorker {
             self.worker_id, *current_tick
         );
 
-        // Process ticks in pipelined batches
-        let mut tick = *current_tick;
+        // Pipelined processing state
         let mut consecutive_failures: u32 = 0;
         let mut skip_size: u32 = FAILURE_SKIP_INITIAL;
+        let mut pending_tick_data: u32 = 0;
+        let mut pending_tx: u32 = 0;
+        let mut next_tick_to_request: u32 = *current_tick;
 
-        while tick < self.worker_end {
-            // Skip ahead if we've hit too many consecutive failures.
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                let skip_to = (tick + skip_size).min(self.worker_end);
-                info!(
-                    "Worker {}: skipping tick {tick}..{skip_to} ({skip_size} ticks, {} consecutive failures)",
-                    self.worker_id, consecutive_failures
-                );
-                tick = skip_to;
-                consecutive_failures = 0;
-                skip_size = (skip_size * 2).min(FAILURE_SKIP_MAX);
-                continue;
-            }
+        // Phase 1: Fill the pipeline with initial batch of tick data requests
+        Self::fill_pipeline(
+            &self.shared,
+            self.worker_id,
+            self.worker_end,
+            &mut stream,
+            &mut next_tick_to_request,
+            &mut pending_tick_data,
+            &mut consecutive_failures,
+            &mut skip_size,
+        )
+        .await?;
 
-            // Phase 1: Build batch of valid ticks and claim them
-            let mut batch: Vec<u32> = Vec::with_capacity(PIPELINE_DEPTH);
-            {
-                let mut t = tick;
-                while batch.len() < PIPELINE_DEPTH && t < self.worker_end {
-                    if self.shared.claim_tick(t) {
-                        batch.push(t);
-                    }
-                    t += 1;
-                }
-            }
+        // Phase 2: Read responses and refill pipeline (sliding window)
+        while pending_tick_data > 0 || pending_tx > 0 {
+            match protocol::read_packet(&mut stream).await {
+                Ok((msg_type, _dejavu, payload)) => {
+                    match msg_type {
+                        8 => {
+                            // Tick data response
+                            pending_tick_data -= 1;
+                            consecutive_failures = 0;
+                            skip_size = FAILURE_SKIP_INITIAL;
 
-            if batch.is_empty() {
-                // All ticks in this range already claimed by other workers
-                tick = (tick + PIPELINE_DEPTH as u32).min(self.worker_end);
-                continue;
-            }
+                            // Extract tick number from payload (offset 4-7)
+                            let resp_tick = if payload.len() >= 8 {
+                                u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]])
+                            } else {
+                                debug!(
+                                    "Worker {}: tick data payload too short ({} bytes)",
+                                    self.worker_id,
+                                    payload.len()
+                                );
+                                self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
+                                Self::fill_pipeline(
+                                    &self.shared,
+                                    self.worker_id,
+                                    self.worker_end,
+                                    &mut stream,
+                                    &mut next_tick_to_request,
+                                    &mut pending_tick_data,
+                                    &mut consecutive_failures,
+                                    &mut skip_size,
+                                )
+                                .await?;
+                                continue;
+                            };
 
-            // Phase 2: Send all tick_data requests (pipelined)
-            let mut dejavu_to_index: HashMap<u32, usize> = HashMap::with_capacity(batch.len());
-            for (i, &batch_tick) in batch.iter().enumerate() {
-                match protocol::send_tick_data_request(&mut stream, batch_tick).await {
-                    Ok(dejavu) => {
-                        dejavu_to_index.insert(dejavu, i);
-                    }
-                    Err(e) => {
-                        warn!("Worker {}: failed to send tick_data request for {batch_tick}: {e:#}", self.worker_id);
-                    }
-                }
-            }
-
-            // Phase 3: Read all pipelined responses
-            let mut results: Vec<Option<std::result::Result<Vec<u8>, &'static str>>> = vec![None; batch.len()];
-            let mut remaining = dejavu_to_index.len();
-
-            while remaining > 0 {
-                match tokio::time::timeout(
-                    PIPELINE_RESPONSE_TIMEOUT,
-                    protocol::read_packet(&mut stream),
-                )
-                .await
-                {
-                    Ok(Ok((msg_type, dejavu, payload))) => {
-                        if let Some(&idx) = dejavu_to_index.get(&dejavu) {
-                            match msg_type {
-                                8 => {
-                                    // BROADCAST_FUTURE_TICK_DATA — tick data response
-                                    results[idx] = Some(Ok(payload));
-                                }
-                                35 => {
-                                    // END_RESPONSE — tick not available on this node
-                                    results[idx] = Some(Err("EndResponse"));
-                                }
-                                54 => {
-                                    // TRY_AGAIN
-                                    results[idx] = Some(Err("TryAgain"));
-                                }
-                                _ => {
-                                    results[idx] = Some(Err("UnexpectedType"));
-                                }
+                            // Decode and publish tick data
+                            if let Err(e) = self
+                                .decode_and_publish(8, &payload, epoch)
+                                .await
+                            {
+                                debug!(
+                                    "Worker {}: tick data decode error for {resp_tick}: {e:#}",
+                                    self.worker_id
+                                );
+                            } else {
+                                self.shared
+                                    .ticks_discovered
+                                    .fetch_add(1, Ordering::Relaxed);
                             }
-                            remaining -= 1;
-                        }
-                        // else: broadcast packet from node (live data) — skip
-                    }
-                    Ok(Err(e)) => {
-                        return Err(e).context("Read error in pipelined backfill");
-                    }
-                    Err(_) => {
-                        // Timeout — mark remaining as failed
-                        warn!(
-                            "Worker {}: pipeline response timeout, {} responses still pending",
-                            self.worker_id, remaining
-                        );
-                        for r in &mut results {
-                            if r.is_none() {
-                                *r = Some(Err("Timeout"));
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
 
-            // Phase 4: Process results in batch order
-            for (i, &batch_tick) in batch.iter().enumerate() {
-                match results[i].take() {
-                    Some(Ok(data)) => {
-                        // Successful tick data — decode and publish
-                        consecutive_failures = 0;
-                        skip_size = FAILURE_SKIP_INITIAL;
-
-                        if let Err(e) = self
-                            .decode_and_publish(8, &data, epoch)
+                            // Request transactions for this tick
+                            if let Err(e) = protocol::send_raw(
+                                &mut stream,
+                                29,
+                                &resp_tick.to_le_bytes(),
+                                rand::random(),
+                            )
                             .await
-                        {
-                            debug!("Worker {}: tick data decode error for {batch_tick}: {e:#}", self.worker_id);
-                        } else {
-                            self.shared.ticks_discovered.fetch_add(1, Ordering::Relaxed);
-                        }
+                            {
+                                debug!(
+                                    "Worker {}: failed to send tx request for {resp_tick}: {e:#}",
+                                    self.worker_id
+                                );
+                            } else {
+                                pending_tx += 1;
+                            }
 
-                        // Request transactions for this tick
-                        match protocol::request_tick_transactions(&mut stream, batch_tick).await {
-                            Ok(transactions) => {
-                                let tx_count = transactions.len();
-                                for tx_payload in &transactions {
-                                    if let Err(e) = self
-                                        .decode_and_publish(24, tx_payload, epoch)
-                                        .await
-                                    {
-                                        debug!("Worker {}: tx decode error for tick {batch_tick}: {e:#}", self.worker_id);
-                                    }
-                                }
+                            self.shared
+                                .ticks_completed
+                                .fetch_add(1, Ordering::Relaxed);
+                            self.pipeline
+                                .indexed_tick
+                                .fetch_max(resp_tick, Ordering::Relaxed);
+
+                            // Refill pipeline
+                            Self::fill_pipeline(
+                                &self.shared,
+                                self.worker_id,
+                                self.worker_end,
+                                &mut stream,
+                                &mut next_tick_to_request,
+                                &mut pending_tick_data,
+                                &mut consecutive_failures,
+                                &mut skip_size,
+                            )
+                            .await?;
+                        }
+                        35 => {
+                            // EndResponse: either tick data unavailable or end
+                            // of transaction list.
+                            if pending_tx > 0 {
+                                // End of transaction list (normal completion)
+                                pending_tx -= 1;
+                            } else if pending_tick_data > 0 {
+                                // Tick data not available for this tick
+                                pending_tick_data -= 1;
+                                consecutive_failures += 1;
+                                self.shared
+                                    .ticks_failed
+                                    .fetch_add(1, Ordering::Relaxed);
+
+                                // Refill pipeline
+                                Self::fill_pipeline(
+                                    &self.shared,
+                                    self.worker_id,
+                                    self.worker_end,
+                                    &mut stream,
+                                    &mut next_tick_to_request,
+                                    &mut pending_tick_data,
+                                    &mut consecutive_failures,
+                                    &mut skip_size,
+                                )
+                                .await?;
+                            }
+                        }
+                        24 => {
+                            // Transaction response
+                            if let Err(e) = self
+                                .decode_and_publish(24, &payload, epoch)
+                                .await
+                            {
+                                debug!(
+                                    "Worker {}: tx decode error: {e:#}",
+                                    self.worker_id
+                                );
+                            } else {
                                 self.shared
                                     .txs_discovered
-                                    .fetch_add(tx_count as u64, Ordering::Relaxed);
-                            }
-                            Err(e) => {
-                                debug!("Worker {}: no transactions for {batch_tick}: {e:#}", self.worker_id);
+                                    .fetch_add(1, Ordering::Relaxed);
                             }
                         }
-
-                        self.shared.ticks_completed.fetch_add(1, Ordering::Relaxed);
-                        self.pipeline
-                            .indexed_tick
-                            .fetch_max(batch_tick, Ordering::Relaxed);
-                    }
-                    Some(Err(_)) => {
-                        // Tick not available or error
-                        consecutive_failures += 1;
-                        self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
-                    }
-                    None => {
-                        // Should not happen, but handle gracefully
-                        consecutive_failures += 1;
-                        self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
+                        _ => {
+                            debug!(
+                                "Worker {}: unexpected msg_type {msg_type} in pipeline",
+                                self.worker_id
+                            );
+                        }
                     }
                 }
+                Err(e) => {
+                    warn!("Worker {}: pipeline read error: {e:#}", self.worker_id);
+                    break;
+                }
             }
-
-            // Advance past the batch
-            tick = batch.last().map(|t| t + 1).unwrap_or(tick);
         }
 
-        *current_tick = tick;
+        *current_tick = next_tick_to_request;
         Ok(())
     }
 
