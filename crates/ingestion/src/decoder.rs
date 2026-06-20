@@ -40,7 +40,7 @@ impl TickVoteAggregator {
         computor_index: u16,
     ) -> Option<qonduit_core::QuorumTick> {
         let key = (epoch, tick);
-        let voted = self.votes.entry(key).or_insert_with(HashSet::new);
+        let voted = self.votes.entry(key).or_default();
         voted.insert(computor_index);
 
         if voted.len() >= QUORUM && !self.quorum_published.contains(&key) {
@@ -217,7 +217,7 @@ impl PacketDecoder {
             // Periodic pruning
             let mut count = self.vote_count.lock().unwrap();
             *count += 1;
-            if *count % Self::PRUNE_INTERVAL == 0 {
+            if (*count).is_multiple_of(Self::PRUNE_INTERVAL) {
                 agg.prune(tick, Self::KEEP_TICKS);
             }
 

@@ -492,7 +492,7 @@ impl WarmStorage {
         let mut key = [0u8; 36];
         key[..32].copy_from_slice(entity);
         key[32..36].copy_from_slice(&asset_index.to_be_bytes());
-        self.db.put_cf(cf, key, &[])?;
+        self.db.put_cf(cf, key, [])?;
         Ok(())
     }
 
