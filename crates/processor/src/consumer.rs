@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use async_nats::jetstream::{self, consumer::DeliverPolicy, AckKind};
+use async_nats::jetstream::{self, consumer::DeliverPolicy};
 use async_nats::jetstream::consumer::PullConsumer;
 use async_nats::Client as NatsClient;
 use futures_util::StreamExt;
@@ -325,8 +325,10 @@ impl Consumer {
                     Ok(msg) => {
                         let payload = msg.payload.to_vec();
                         if let Err(e) = handler(payload, indexer.clone()).await {
-                            warn!("Handler error on {stream_name}: {e}");
-                            let _ = msg.ack_with(AckKind::Nak(None)).await;
+                            // ACK permanent failures (deserialization errors will never
+                            // succeed on retry) to avoid redelivery spam.
+                            warn!("Handler error on {stream_name} (acking): {e}");
+                            let _ = msg.ack().await;
                         } else {
                             let _ = msg.ack().await;
                         }

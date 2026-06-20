@@ -116,8 +116,16 @@ impl Indexer {
 
     /// Index a transaction: store by hash, index by tick and by source entity.
     pub async fn index_transaction(&self, payload: &[u8]) -> Result<()> {
-        let tx: Transaction =
-            serde_json::from_slice(payload).context("Failed to deserialize Transaction")?;
+        let tx: Transaction = match serde_json::from_slice(payload) {
+            Ok(tx) => tx,
+            Err(e) => {
+                // Old NATS messages may use a different struct layout.
+                // Log first 200 chars of payload for diagnosis, then skip.
+                let preview = String::from_utf8_lossy(&payload[..payload.len().min(200)]);
+                tracing::warn!("Transaction deserialization failed: {e} — payload preview: {preview}");
+                anyhow::bail!("Transaction deserialization failed: {e}");
+            }
+        };
 
         // Decode the transaction hash (base-26 identity string, 60 chars)
         let hash_bytes = qonduit_core::decode_base26(&tx.hash).unwrap_or_else(|| {
