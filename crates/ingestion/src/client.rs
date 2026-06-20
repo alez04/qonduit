@@ -36,7 +36,8 @@ const PEER_ROTATION_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// If no broadcast packets (non-type-28) are received in this window, the node
 /// is considered "silent" and we rotate to a different peer.
-const SILENT_NODE_THRESHOLD_SECS: u64 = 60;
+/// Set high enough to tolerate brief quiet periods during heavy backfill load.
+const SILENT_NODE_THRESHOLD_SECS: u64 = 120;
 
 /// Max pending entity identities to avoid unbounded growth.
 const MAX_PENDING_ENTITIES: usize = 500;

@@ -206,6 +206,19 @@ pub async fn request_entity(stream: &mut TcpStream, identity: &[u8; 32]) -> Resu
     }
 }
 
+/// Send a tick data request (type 16) without waiting for a response.
+///
+/// Returns the dejavu correlation ID so the caller can match the response.
+/// Used for pipelined requests where multiple requests are sent ahead.
+pub async fn send_tick_data_request(
+    stream: &mut TcpStream,
+    tick: u32,
+) -> Result<u32> {
+    let dejavu = rand::random::<u32>().max(1);
+    send_raw(stream, 16, &tick.to_le_bytes(), dejavu).await?;
+    Ok(dejavu)
+}
+
 /// Request historical tick data (type 16, REQUEST_TICK_DATA).
 ///
 /// Sends a request for a specific tick number and returns the raw TickData
@@ -214,7 +227,7 @@ pub async fn request_tick_data(stream: &mut TcpStream, tick: u32) -> Result<Vec<
     let dejavu = rand::random::<u32>().max(1);
     send_raw(stream, 16, &tick.to_le_bytes(), dejavu).await?;
 
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
@@ -253,7 +266,7 @@ pub async fn request_tick_transactions(
     send_raw(stream, 29, &tick.to_le_bytes(), dejavu).await?;
 
     let mut transactions = Vec::new();
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
