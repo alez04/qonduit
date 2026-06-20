@@ -52,7 +52,7 @@ async fn ws_tick(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.TICK".to_string();
+    let subject = "Q.*.QONDUIT.TICK".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -60,7 +60,7 @@ async fn ws_tx(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.TX".to_string();
+    let subject = "Q.*.QONDUIT.TX".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -68,7 +68,7 @@ async fn ws_entity(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.ENTITY".to_string();
+    let subject = "Q.*.QONDUIT.ENTITY".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -76,7 +76,7 @@ async fn ws_spectrum(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.SPECTRUM".to_string();
+    let subject = "Q.*.QONDUIT.SPECTRUM".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -84,7 +84,7 @@ async fn ws_custom_message(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.CUSTMSG".to_string();
+    let subject = "Q.*.QONDUIT.CUSTMSG".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -92,7 +92,7 @@ async fn ws_contract_fn(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.CFNR".to_string();
+    let subject = "Q.*.QONDUIT.CFNR".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -100,7 +100,7 @@ async fn ws_computors(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.COMPUTORS".to_string();
+    let subject = "Q.*.QONDUIT.COMPUTORS".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -108,7 +108,7 @@ async fn ws_asset(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.ASSET".to_string();
+    let subject = "Q.*.QONDUIT.ASSET".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -116,7 +116,7 @@ async fn ws_contract(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.CONTRACT".to_string();
+    let subject = "Q.*.QONDUIT.CONTRACT".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -124,7 +124,7 @@ async fn ws_tickvote(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.TICKVOTE".to_string();
+    let subject = "Q.*.QONDUIT.TICKVOTE".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -132,7 +132,7 @@ async fn ws_oracle(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.ORACLE".to_string();
+    let subject = "Q.*.QONDUIT.ORACLE".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -140,7 +140,7 @@ async fn ws_log(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.LOG".to_string();
+    let subject = "Q.*.QONDUIT.LOG".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -148,7 +148,7 @@ async fn ws_quorum(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.QUORUM".to_string();
+    let subject = "Q.*.QONDUIT.QUORUM".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -156,7 +156,7 @@ async fn ws_logdigest(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.LOGDIGEST".to_string();
+    let subject = "Q.*.QONDUIT.LOGDIGEST".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
@@ -164,7 +164,7 @@ async fn ws_mining(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = "QONDUIT.MINING".to_string();
+    let subject = "Q.*.QONDUIT.MINING".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 

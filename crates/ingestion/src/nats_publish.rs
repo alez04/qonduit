@@ -53,9 +53,9 @@ impl NatsPublisher {
         Self { js }
     }
 
-    /// Publish a tick to `QONDUIT.TICK`.
+    /// Publish a tick to `Q.{epoch}.QONDUIT.TICK`.
     pub async fn publish_tick(&self, epoch: u16, tick: &TickData) -> Result<()> {
-        let subject = "QONDUIT.TICK".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.TICK");
         let payload = serde_json::to_vec(tick).context("Failed to serialize TickData")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -67,9 +67,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a transaction to `QONDUIT.TX`.
+    /// Publish a transaction to `Q.{epoch}.QONDUIT.TX`.
     pub async fn publish_tx(&self, epoch: u16, tx: &Transaction) -> Result<()> {
-        let subject = "QONDUIT.TX".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.TX");
         let payload = serde_json::to_vec(tx).context("Failed to serialize Transaction")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -81,9 +81,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish an entity to `QONDUIT.ENTITY`.
+    /// Publish an entity to `Q.{epoch}.QONDUIT.ENTITY`.
     pub async fn publish_entity(&self, _epoch: u16, entity: &EntityData) -> Result<()> {
-        let subject = "QONDUIT.ENTITY".to_string();
+        let subject = format!("Q.{_epoch}.QONDUIT.ENTITY");
         let payload = serde_json::to_vec(entity).context("Failed to serialize EntityData")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -95,9 +95,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish computors to `QONDUIT.COMPUTORS`.
+    /// Publish computors to `Q.{epoch}.QONDUIT.COMPUTORS`.
     pub async fn publish_computors(&self, epoch: u16, computors: &Computors) -> Result<()> {
-        let subject = "QONDUIT.COMPUTORS".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.COMPUTORS");
         let payload =
             serde_json::to_vec(computors).context("Failed to serialize Computors")?;
         self.js
@@ -110,14 +110,14 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a custom (broadcast) message to `QONDUIT.CUSTMSG`.
+    /// Publish a custom (broadcast) message to `Q.{epoch}.QONDUIT.CUSTMSG`.
     pub async fn publish_custom_message(
         &self,
         epoch: u16,
         tick: u32,
         msg: &CustomMessage,
     ) -> Result<()> {
-        let subject = "QONDUIT.CUSTMSG".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.CUSTMSG");
         let payload = serde_json::to_vec(msg).context("Failed to serialize CustomMessage")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -129,14 +129,14 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish oracle data to `QONDUIT.ORACLE`.
+    /// Publish oracle data to `Q.{epoch}.QONDUIT.ORACLE`.
     pub async fn publish_oracle(
         &self,
         epoch: u16,
         tick: u32,
         data: &serde_json::Value,
     ) -> Result<()> {
-        let subject = "QONDUIT.ORACLE".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.ORACLE");
         let payload = serde_json::to_vec(data).context("Failed to serialize oracle data")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -148,9 +148,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish an asset record to `QONDUIT.ASSET`.
+    /// Publish an asset record to `Q.{epoch}.QONDUIT.ASSET`.
     pub async fn publish_asset(&self, epoch: u16, asset: &AssetRecord) -> Result<()> {
-        let subject = "QONDUIT.ASSET".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.ASSET");
         let payload = serde_json::to_vec(asset).context("Failed to serialize AssetRecord")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -162,9 +162,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a contract IPO to `QONDUIT.CONTRACT`.
+    /// Publish a contract IPO to `Q.{epoch}.QONDUIT.CONTRACT`.
     pub async fn publish_contract_ipo(&self, epoch: u16, ipo: &ContractIpo) -> Result<()> {
-        let subject = "QONDUIT.CONTRACT".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.CONTRACT");
         let payload = serde_json::to_vec(ipo).context("Failed to serialize ContractIpo")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -176,14 +176,14 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish contract function response to `QONDUIT.CFNR`.
+    /// Publish contract function response to `Q.{epoch}.QONDUIT.CFNR`.
     pub async fn publish_contract_fn(
         &self,
         epoch: u16,
         dejavu: u32,
         data: &[u8],
     ) -> Result<()> {
-        let subject = "QONDUIT.CFNR".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.CFNR");
         let payload = serde_json::to_vec(&serde_json::json!({
             "dejavu": dejavu,
             "data_hex": hex::encode(data),
@@ -199,9 +199,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a tick vote to `QONDUIT.TICKVOTE`.
+    /// Publish a tick vote to `Q.{epoch}.QONDUIT.TICKVOTE`.
     pub async fn publish_tick_vote(&self, epoch: u16, vote: &TickVote) -> Result<()> {
-        let subject = "QONDUIT.TICKVOTE".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.TICKVOTE");
         let payload = serde_json::to_vec(vote).context("Failed to serialize TickVote")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -213,13 +213,13 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a spectrum entry to `QONDUIT.SPECTRUM`.
+    /// Publish a spectrum entry to `Q.{epoch}.QONDUIT.SPECTRUM`.
     pub async fn publish_spectrum(
         &self,
         epoch: u16,
         entry: &serde_json::Value,
     ) -> Result<()> {
-        let subject = "QONDUIT.SPECTRUM".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.SPECTRUM");
         let payload =
             serde_json::to_vec(entry).context("Failed to serialize spectrum entry")?;
         self.js
@@ -232,13 +232,13 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish decoded log events to `QONDUIT.LOG`.
+    /// Publish decoded log events to `Q.{epoch}.QONDUIT.LOG`.
     pub async fn publish_log_events(
         &self,
         epoch: u16,
         events: &[qonduit_core::LogEvent],
     ) -> Result<()> {
-        let subject = "QONDUIT.LOG".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.LOG");
         let payload =
             serde_json::to_vec(events).context("Failed to serialize log events")?;
         self.js
@@ -255,9 +255,9 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish an aggregated quorum tick to `QONDUIT.QUORUM`.
+    /// Publish an aggregated quorum tick to `Q.{epoch}.QONDUIT.QUORUM`.
     pub async fn publish_quorum_tick(&self, epoch: u16, qt: &QuorumTick) -> Result<()> {
-        let subject = "QONDUIT.QUORUM".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.QUORUM");
         let payload = serde_json::to_vec(qt).context("Failed to serialize QuorumTick")?;
         self.js
             .publish(subject.clone(), payload.into())
@@ -272,9 +272,10 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a log state digest to `QONDUIT.LOGDIGEST`.
+    /// Publish a log state digest to `Q.{epoch}.QONDUIT.LOGDIGEST`.
     pub async fn publish_log_state_digest(&self, digest: &LogStateDigest) -> Result<()> {
-        let subject = "QONDUIT.LOGDIGEST".to_string();
+        // Log state digest is not epoch-specific; use 0 as placeholder.
+        let subject = "Q.0.QONDUIT.LOGDIGEST".to_string();
         let payload =
             serde_json::to_vec(digest).context("Failed to serialize LogStateDigest")?;
         self.js
@@ -287,13 +288,13 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish oracle data response to `QONDUIT.ORACLE`.
+    /// Publish oracle data response to `Q.{epoch}.QONDUIT.ORACLE`.
     pub async fn publish_oracle_data(
         &self,
         epoch: u16,
         oracle: &OracleDataResponse,
     ) -> Result<()> {
-        let subject = "QONDUIT.ORACLE".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.ORACLE");
         let payload =
             serde_json::to_vec(oracle).context("Failed to serialize OracleDataResponse")?;
         self.js
@@ -309,13 +310,13 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a custom mining task to `QONDUIT.MINING`.
+    /// Publish a custom mining task to `Q.{epoch}.QONDUIT.MINING`.
     pub async fn publish_custom_mining_task(
         &self,
         epoch: u16,
         task: &CustomMiningTask,
     ) -> Result<()> {
-        let subject = "QONDUIT.MINING".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.MINING");
         let payload =
             serde_json::to_vec(task).context("Failed to serialize CustomMiningTask")?;
         self.js
@@ -331,13 +332,13 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a custom mining solution to `QONDUIT.MINING`.
+    /// Publish a custom mining solution to `Q.{epoch}.QONDUIT.MINING`.
     pub async fn publish_custom_mining_solution(
         &self,
         epoch: u16,
         solution: &CustomMiningSolution,
     ) -> Result<()> {
-        let subject = "QONDUIT.MINING".to_string();
+        let subject = format!("Q.{epoch}.QONDUIT.MINING");
         let payload = serde_json::to_vec(solution)
             .context("Failed to serialize CustomMiningSolution")?;
         self.js
