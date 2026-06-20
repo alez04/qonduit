@@ -83,11 +83,14 @@ impl Peer {
 }
 
 /// JSON response from `api.qubic.global/random-peers`.
+///
+/// Bob peers (port 21842) are ignored — they never broadcast tick data.
 #[derive(Debug, serde::Deserialize)]
 struct RandomPeersResponse {
     #[serde(default, rename = "litePeers")]
     lite_peers: Vec<String>,
     #[serde(default, rename = "bobPeers")]
+    #[allow(dead_code)]
     bob_peers: Vec<String>,
 }
 
@@ -106,7 +109,7 @@ impl PeerManager {
         Self {
             peers: Arc::new(RwLock::new(peers)),
             bootstrap_urls: vec![
-                "https://api.qubic.global/random-peers?service=bobNode&litePeers=2&bobPeers=4"
+                "https://api.qubic.global/random-peers?service=bobNode&litePeers=8&bobPeers=0"
                     .to_string(),
             ],
         }
@@ -145,24 +148,14 @@ impl PeerManager {
         let mut added = 0usize;
         let mut peers = self.peers.write().await;
 
-        // Lite peers -> port 21841 (standard Qubic protocol)
+        // Only add lite peers (port 21841). Bob peers (port 21842) never
+        // broadcast tick data, so they're useless for live ingestion.
         for ip_str in &body.lite_peers {
             if let Some(addr) = parse_peer_addr(ip_str, QUBIC_PORT) {
                 if !peers.iter().any(|p| p.addr == addr) {
                     peers.push(Peer::new(addr));
                     added += 1;
                     debug!("Added lite peer {addr}");
-                }
-            }
-        }
-
-        // Bob peers -> port 21842
-        for ip_str in &body.bob_peers {
-            if let Some(addr) = parse_peer_addr(ip_str, 21842) {
-                if !peers.iter().any(|p| p.addr == addr) {
-                    peers.push(Peer::new(addr));
-                    added += 1;
-                    debug!("Added bob peer {addr}");
                 }
             }
         }
@@ -406,10 +399,10 @@ mod tests {
 
     #[test]
     fn test_parse_peer_addr_with_whitespace() {
-        let addr = parse_peer_addr("  10.0.0.1  ", 21842);
+        let addr = parse_peer_addr("  10.0.0.1  ", 21841);
         assert_eq!(
             addr,
-            Some("10.0.0.1:21842".parse::<SocketAddr>().unwrap())
+            Some("10.0.0.1:21841".parse::<SocketAddr>().unwrap())
         );
     }
 
