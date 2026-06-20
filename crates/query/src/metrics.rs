@@ -432,25 +432,26 @@ pub fn update_pipeline_gauges(pipeline: &qonduit_core::PipelineState) {
     INDEXING_RATE_CURRENT.set((status.current_indexing_rate * 1000.0) as i64); // stored as millis
     ETA_TO_LIVE_SECONDS.set(status.estimated_seconds_to_live as i64);
 
-    // Epoch progress (estimated)
-    // Typical epoch is ~218K ticks. Use indexed_tick - epoch_start_tick to compute progress.
-    // For a rough estimate: assume current epoch started at the most recent epoch transition.
-    // We track this via the difference between indexed_tick and the initial_tick of the epoch.
-    // For now use a simpler heuristic: progress = min(100, indexed_tick / expected_epoch_size * 100)
-    // We'll refine this if we have initial_tick data.
-    let epoch_progress = if behind > 0 {
-        // Still catching up - show how much of the gap is closed
-        0i64
-    } else if node_tick > 0 {
-        // Caught up - estimate progress within current epoch
-        // Use a sliding window: assume ~218K ticks per epoch, show position mod that
-        let epoch_size_guess = 218_000u32;
-        let position_in_epoch = node_tick % epoch_size_guess;
-        ((position_in_epoch as f64 / epoch_size_guess as f64) * 100.0) as i64
+    // Epoch progress (precise, using RPC epoch interval data)
+    let epoch_progress = if let Some(pct) = qonduit_core::epoch_intervals::epoch_progress_pct(
+        node_epoch,
+        indexed_tick,
+    ) {
+        pct as i64
     } else {
-        0
+        // Fallback: rough estimate if epoch data not available
+        if behind > 0 {
+            0i64
+        } else if node_tick > 0 {
+            let epoch_size_guess = 218_000u32;
+            let position_in_epoch = node_tick % epoch_size_guess;
+            ((position_in_epoch as f64 / epoch_size_guess as f64) * 100.0) as i64
+        } else {
+            0
+        }
     };
     EPOCH_PROGRESS_PCT.set(epoch_progress);
+    EPOCHS_FULLY_INDEXED.set(qonduit_core::epoch_intervals::epochs_fully_indexed(indexed_tick) as i64);
 
     // Backfill
     BACKFILL_RUNNING.set(

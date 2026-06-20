@@ -5,6 +5,7 @@
 //! with zerocopy support for zero-decode TCP packet parsing.
 
 pub mod constants;
+pub mod epoch_intervals;
 pub mod error;
 pub mod event;
 pub mod hash;

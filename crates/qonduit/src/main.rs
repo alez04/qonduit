@@ -263,6 +263,9 @@ async fn main() -> Result<()> {
         tracing::warn!("Failed to ensure NATS streams (may already exist): {e}");
     }
 
+    // Fetch epoch tick intervals from official RPC for precise progress tracking
+    qonduit_ingestion::epoch_fetch::fetch_epoch_intervals_safe().await;
+
     // --- Phase 3: Build shared state ---
     let pipeline = Arc::new(qonduit_core::PipelineState::new());
 

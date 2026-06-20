@@ -5,6 +5,7 @@ pub mod backfill;
 pub mod client;
 pub mod decoder;
 pub mod decoders;
+pub mod epoch_fetch;
 pub mod metrics;
 pub mod nats_publish;
 pub mod nats_setup;
