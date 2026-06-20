@@ -98,9 +98,17 @@ impl Default for BackfillConfig {
 #[allow(dead_code)]
 enum ExpectedResponse {
     /// Expecting type 8 (tick data) or type 35 (tick not available).
-    TickData(u32),
+    TickData { tick: u32, dejavu: u32 },
     /// Expecting type 24(s) (transactions) followed by type 35 (end of list).
-    TransactionEnd(u32),
+    TransactionEnd { tick: u32, dejavu: u32 },
+}
+
+impl ExpectedResponse {
+    fn dejavu(&self) -> u32 {
+        match self {
+            ExpectedResponse::TickData { dejavu, .. } | ExpectedResponse::TransactionEnd { dejavu, .. } => *dejavu,
+        }
+    }
 }
 
 /// Shared state for the backfill process.
@@ -589,17 +597,22 @@ impl BackfillWorker {
             )
             .await
             {
-                Ok(Ok((msg_type, _dejavu, payload))) => {
+                Ok(Ok((msg_type, dejavu, payload))) => {
                     match msg_type {
                         8 => {
                             // BROADCAST_FUTURE_TICK_DATA: tick data response
+                            // Skip broadcasts from the live node (dejavu won't match our request)
+                            if expected.front().is_none_or(|e| e.dejavu() != dejavu) {
+                                debug!("Worker {}: skipping broadcast type 8 dejavu={dejavu}", self.worker_id);
+                                continue;
+                            }
+
                             let resp_tick = if payload.len() >= 8 {
                                 u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]])
                             } else {
                                 // Payload too short - skip
-                                if let Some(ExpectedResponse::TickData(_)) = expected.pop_front() {
-                                    self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
-                                }
+                                expected.pop_front();
+                                self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
                                 Self::fill_pipeline(
                                     &self.shared, self.worker_id, self.worker_end,
                                     &mut stream, &mut next_tick_to_request, &mut expected,
@@ -609,15 +622,7 @@ impl BackfillWorker {
                             };
 
                             // Pop the matching TickData entry from the FIFO queue
-                            match expected.pop_front() {
-                                Some(ExpectedResponse::TickData(_)) => {}
-                                Some(_) => {
-                                    // Protocol desync — break and reconnect
-                                    warn!("Worker {}: got type 8 but expected non-TickData response, protocol desync", self.worker_id);
-                                    break;
-                                }
-                                None => break,
-                            }
+                            expected.pop_front();
 
                             // Reset failure tracking
                             consecutive_failures = 0;
@@ -631,17 +636,18 @@ impl BackfillWorker {
                             }
 
                             // Immediately send type 29 (transaction request) for this tick
+                            let tx_dejavu = rand::random::<u32>().max(1);
                             if let Err(e) = protocol::send_raw(
                                 &mut stream,
                                 29,
                                 &resp_tick.to_le_bytes(),
-                                rand::random(),
+                                tx_dejavu,
                             )
                             .await
                             {
                                 debug!("Worker {}: failed to send tx request for {resp_tick}: {e:#}", self.worker_id);
                             } else {
-                                expected.push_back(ExpectedResponse::TransactionEnd(resp_tick));
+                                expected.push_back(ExpectedResponse::TransactionEnd { tick: resp_tick, dejavu: tx_dejavu });
                             }
 
                             self.shared.ticks_completed.fetch_add(1, Ordering::Relaxed);
@@ -656,29 +662,26 @@ impl BackfillWorker {
                         }
                         35 => {
                             // END_RESPONSE: either "tick data not available" or
-                            // "end of transaction list" — the FIFO queue disambiguates.
-                            match expected.front() {
-                                Some(ExpectedResponse::TransactionEnd(_)) => {
-                                    expected.pop_front();
-                                    // Normal end-of-transactions, nothing to do
+                            // "end of transaction list" — match by dejavu to handle interleaved broadcasts.
+                            if expected.front().is_some_and(|e| e.dejavu() == dejavu) {
+                                match expected.pop_front().unwrap() {
+                                    ExpectedResponse::TransactionEnd { .. } => {
+                                        // Normal end-of-transactions, nothing to do
+                                    }
+                                    ExpectedResponse::TickData { .. } => {
+                                        // Tick data not available on this node
+                                        consecutive_failures += 1;
+                                        self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
+                                        Self::fill_pipeline(
+                                            &self.shared, self.worker_id, self.worker_end,
+                                            &mut stream, &mut next_tick_to_request, &mut expected,
+                                            &mut consecutive_failures, &mut skip_size,
+                                        ).await?;
+                                    }
                                 }
-                                Some(ExpectedResponse::TickData(_)) => {
-                                    expected.pop_front();
-                                    // Tick data not available on this node
-                                    consecutive_failures += 1;
-                                    self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
-
-                                    // Refill pipeline
-                                    Self::fill_pipeline(
-                                        &self.shared, self.worker_id, self.worker_end,
-                                        &mut stream, &mut next_tick_to_request, &mut expected,
-                                        &mut consecutive_failures, &mut skip_size,
-                                    ).await?;
-                                }
-                                None => {
-                                    // Unexpected type 35 with no pending requests
-                                    warn!("Worker {}: unexpected type 35 with empty pipeline", self.worker_id);
-                                }
+                            } else {
+                                // Dejavu doesn't match front — might be a broadcast EndResponse, skip
+                                debug!("Worker {}: skipping type 35 with dejavu={dejavu} (not matching front)", self.worker_id);
                             }
                         }
                         24 => {
@@ -690,16 +693,17 @@ impl BackfillWorker {
                             }
                         }
                         54 => {
-                            // TRY_AGAIN — count as a failure and refill
-                            if let Some(ExpectedResponse::TickData(_)) = expected.front() {
-                                expected.pop_front();
-                                consecutive_failures += 1;
-                                self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
-                                Self::fill_pipeline(
-                                    &self.shared, self.worker_id, self.worker_end,
-                                    &mut stream, &mut next_tick_to_request, &mut expected,
-                                    &mut consecutive_failures, &mut skip_size,
-                                ).await?;
+                            // TRY_AGAIN — match by dejavu, count as failure
+                            if expected.front().is_some_and(|e| e.dejavu() == dejavu) {
+                                if let Some(ExpectedResponse::TickData { .. }) = expected.pop_front() {
+                                    consecutive_failures += 1;
+                                    self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
+                                    Self::fill_pipeline(
+                                        &self.shared, self.worker_id, self.worker_end,
+                                        &mut stream, &mut next_tick_to_request, &mut expected,
+                                        &mut consecutive_failures, &mut skip_size,
+                                    ).await?;
+                                }
                             }
                         }
                         _ => {
@@ -721,7 +725,7 @@ impl BackfillWorker {
                         );
                         // Count all pending TickData as failures
                         for entry in &expected {
-                            if matches!(entry, ExpectedResponse::TickData(_)) {
+                            if matches!(entry, ExpectedResponse::TickData { .. }) {
                                 self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
                             }
                         }
@@ -772,14 +776,15 @@ impl BackfillWorker {
                 }
 
                 // Send type 16 (REQUEST_TICK_DATA)
+                let tick_dejavu = rand::random::<u32>().max(1);
                 protocol::send_raw(
                     stream,
                     16,
                     &(*next_tick_to_request).to_le_bytes(),
-                    rand::random(),
+                    tick_dejavu,
                 )
                 .await?;
-                expected.push_back(ExpectedResponse::TickData(*next_tick_to_request));
+                expected.push_back(ExpectedResponse::TickData { tick: *next_tick_to_request, dejavu: tick_dejavu });
                 *next_tick_to_request += 1;
             }
             Ok(())
