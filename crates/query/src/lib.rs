@@ -42,6 +42,12 @@ impl Default for QueryConfig {
 
 /// Build the Axum router with all routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
+    // TODO: Rate limiting middleware.
+    // `tower-http` does not include rate limiting out of the box.
+    // Options for future implementation:
+    //   - `governor` crate: per-IP rate limiting with in-memory state
+    //   - Custom `tower::Layer` using `tokio::sync::Semaphore` per IP
+    //   - External rate limiter (e.g., nginx, cloudflare) in front of the service
     Router::new()
         .merge(rest::routes())
         .merge(rpc::routes())

@@ -34,6 +34,9 @@ pub const CF_ASSET: &str = "asset";
 pub const CF_COMPUTORS: &str = "computors";
 pub const CF_CONTRACT_IPO: &str = "contract_ipo";
 pub const CF_CUSTOM_MESSAGE: &str = "custom_message";
+pub const CF_ENTITY_ASSET: &str = "entity_asset";
+pub const CF_LOG_EVENT: &str = "log_event";
+pub const CF_TICK_VOTE: &str = "tick_vote";
 pub const CF_META: &str = "meta";
 
 const ALL_CFS: &[&str] = &[
@@ -47,6 +50,9 @@ const ALL_CFS: &[&str] = &[
     CF_COMPUTORS,
     CF_CONTRACT_IPO,
     CF_CUSTOM_MESSAGE,
+    CF_ENTITY_ASSET,
+    CF_LOG_EVENT,
+    CF_TICK_VOTE,
     CF_META,
 ];
 
@@ -396,6 +402,28 @@ impl WarmStorage {
         Ok(self.db.get_cf(cf, contract_index.to_be_bytes())?)
     }
 
+    /// Get all contract IPOs up to a limit.
+    pub fn get_all_contract_ipos(&self, limit: usize) -> Result<Vec<(u32, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_CONTRACT_IPO).unwrap();
+        let iter = self
+            .db
+            .iterator_cf(cf, IteratorMode::From(&[0u8; 4], Direction::Forward));
+
+        let mut results = Vec::new();
+        for item in iter {
+            let (key, value) = item?;
+            if key.len() != 4 {
+                continue;
+            }
+            if results.len() >= limit {
+                break;
+            }
+            let index = u32::from_be_bytes([key[0], key[1], key[2], key[3]]);
+            results.push((index, value.to_vec()));
+        }
+        Ok(results)
+    }
+
     // ------------------------------------------------------------------
     // Custom message operations
     // ------------------------------------------------------------------
@@ -429,6 +457,161 @@ impl WarmStorage {
             messages.push(value.to_vec());
         }
         Ok(messages)
+    }
+
+    /// Scan all entity identity keys up to a limit.
+    pub fn get_all_entity_keys(&self, limit: usize) -> Result<Vec<[u8; 32]>> {
+        let cf = self.db.cf_handle(CF_ENTITY).unwrap();
+        let iter = self.db.iterator_cf(cf, IteratorMode::Start);
+        let mut keys = Vec::new();
+        for item in iter {
+            let (key, _value) = item?;
+            if key.len() != 32 {
+                continue;
+            }
+            if keys.len() >= limit {
+                break;
+            }
+            let mut identity = [0u8; 32];
+            identity.copy_from_slice(&key);
+            keys.push(identity);
+        }
+        Ok(keys)
+    }
+
+    // ------------------------------------------------------------------
+    // Entity → Asset index operations
+    // ------------------------------------------------------------------
+
+    /// Associate an entity with an asset index.
+    ///
+    /// Key in `CF_ENTITY_ASSET`: `entity(32 bytes) || asset_index(4 bytes BE)` (36 bytes).
+    /// Value: empty (existence-based index).
+    pub fn put_entity_asset(&self, entity: &[u8; 32], asset_index: u32) -> Result<()> {
+        let cf = self.db.cf_handle(CF_ENTITY_ASSET).unwrap();
+        let mut key = [0u8; 36];
+        key[..32].copy_from_slice(entity);
+        key[32..36].copy_from_slice(&asset_index.to_be_bytes());
+        self.db.put_cf(cf, key, &[])?;
+        Ok(())
+    }
+
+    /// Get all asset indices associated with an entity.
+    pub fn get_assets_for_entity(&self, entity: &[u8; 32]) -> Result<Vec<u32>> {
+        let cf = self.db.cf_handle(CF_ENTITY_ASSET).unwrap();
+        let iter = self
+            .db
+            .iterator_cf(cf, IteratorMode::From(entity, Direction::Forward));
+
+        let mut assets = Vec::new();
+        for item in iter {
+            let (key, _value) = item?;
+            if key.len() != 36 || key[..32] != *entity {
+                break;
+            }
+            let asset_index = u32::from_be_bytes([key[32], key[33], key[34], key[35]]);
+            assets.push(asset_index);
+        }
+        Ok(assets)
+    }
+
+    // ------------------------------------------------------------------
+    // Log event operations
+    // ------------------------------------------------------------------
+
+    /// Store a log event.
+    ///
+    /// Key in `CF_LOG_EVENT`: `tick(4 bytes BE) || tx_index(4 bytes BE) || event_type(1 byte)` (9 bytes).
+    /// Value: JSON-encoded event payload.
+    pub fn put_log_event(
+        &self,
+        tick: u32,
+        tx_index: u32,
+        event_type: u8,
+        data: &[u8],
+    ) -> Result<()> {
+        let cf = self.db.cf_handle(CF_LOG_EVENT).unwrap();
+        let mut key = [0u8; 9];
+        key[..4].copy_from_slice(&tick.to_be_bytes());
+        key[4..8].copy_from_slice(&tx_index.to_be_bytes());
+        key[8] = event_type;
+        self.db.put_cf(cf, key, data)?;
+        Ok(())
+    }
+
+    /// Get all log events for a given tick.
+    pub fn get_log_events_for_tick(&self, tick: u32) -> Result<Vec<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_LOG_EVENT).unwrap();
+        let prefix = tick.to_be_bytes();
+        let iter = self
+            .db
+            .iterator_cf(cf, IteratorMode::From(&prefix, Direction::Forward));
+
+        let mut events = Vec::new();
+        for item in iter {
+            let (key, value) = item?;
+            if key.len() != 9 || key[..4] != prefix {
+                break;
+            }
+            events.push(value.to_vec());
+        }
+        Ok(events)
+    }
+
+    // ------------------------------------------------------------------
+    // Tick vote operations
+    // ------------------------------------------------------------------
+
+    /// Store a tick vote.
+    ///
+    /// Key in `CF_TICK_VOTE`: `tick(4 bytes BE) || computor_index(2 bytes BE)` (6 bytes).
+    /// Value: JSON-encoded vote data.
+    pub fn put_tick_vote(&self, tick: u32, computor_index: u16, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_TICK_VOTE).unwrap();
+        let mut key = [0u8; 6];
+        key[..4].copy_from_slice(&tick.to_be_bytes());
+        key[4..6].copy_from_slice(&computor_index.to_be_bytes());
+        self.db.put_cf(cf, key, data)?;
+        Ok(())
+    }
+
+    /// Get all votes for a given tick, returning (computor_index, vote_data) pairs.
+    pub fn get_votes_for_tick(&self, tick: u32) -> Result<Vec<(u16, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_TICK_VOTE).unwrap();
+        let prefix = tick.to_be_bytes();
+        let iter = self
+            .db
+            .iterator_cf(cf, IteratorMode::From(&prefix, Direction::Forward));
+
+        let mut votes = Vec::new();
+        for item in iter {
+            let (key, value) = item?;
+            if key.len() != 6 || key[..4] != prefix {
+                break;
+            }
+            let computor_index = u16::from_be_bytes([key[4], key[5]]);
+            votes.push((computor_index, value.to_vec()));
+        }
+        Ok(votes)
+    }
+
+    /// Get the number of votes for a given tick.
+    pub fn count_votes_for_tick(&self, tick: u32) -> Result<usize> {
+        let cf = self.db.cf_handle(CF_TICK_VOTE).unwrap();
+        let prefix = tick.to_be_bytes();
+        let iter = self
+            .db
+            .iterator_cf(cf, IteratorMode::From(&prefix, Direction::Forward));
+
+        let mut count = 0;
+        for item in iter {
+            let (key, _value) = item?;
+            if key.len() != 6 || key[..4] != prefix {
+                break;
+            }
+            count += 1;
+        }
+        Ok(count)
     }
 
     // ------------------------------------------------------------------

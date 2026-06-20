@@ -3,6 +3,9 @@ use axum::{Router, extract::State, routing::post, Json};
 use serde::{Deserialize, Serialize};
 use qonduit_core::identity;
 
+#[allow(unused_imports)]
+use hex;
+
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -177,18 +180,94 @@ async fn dispatch_method(
             Ok(serde_json::json!(items))
         }
         "getOwnedAssets" => {
-            let _id = extract_string_param(params, 0)?;
-            // TODO: Need entity->owned assets index
-            Ok(serde_json::json!([]))
+            let id = extract_string_param(params, 0)?;
+            let key = identity::decode_base26(&id)
+                .ok_or_else(|| anyhow::anyhow!("Invalid identity"))?;
+
+            // Try the entity→asset index first
+            if let Ok(indices) = state.storage.get_assets_for_entity(&key) {
+                if !indices.is_empty() {
+                    let mut assets = Vec::new();
+                    for idx in indices {
+                        if let Ok(Some(data)) = state.storage.get_asset(idx) {
+                            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                                assets.push(val);
+                            }
+                        }
+                    }
+                    return Ok(serde_json::json!(assets));
+                }
+            }
+
+            // Fallback: scan the asset column family for assets owned by this entity
+            let entity_json = serde_json::json!(key);
+            let assets = state.storage.get_all_assets(10000)?;
+            let owned: Vec<serde_json::Value> = assets
+                .into_iter()
+                .filter_map(|(_, data)| serde_json::from_slice::<serde_json::Value>(&data).ok())
+                .filter(|v| v.get("owning_entity") == Some(&entity_json))
+                .collect();
+            Ok(serde_json::json!(owned))
         }
         "getPossessedAssets" => {
-            let _id = extract_string_param(params, 0)?;
-            // TODO: Need entity->possessed assets index
-            Ok(serde_json::json!([]))
+            let id = extract_string_param(params, 0)?;
+            let key = identity::decode_base26(&id)
+                .ok_or_else(|| anyhow::anyhow!("Invalid identity"))?;
+
+            // Try the entity→asset index first
+            if let Ok(indices) = state.storage.get_assets_for_entity(&key) {
+                if !indices.is_empty() {
+                    let mut assets = Vec::new();
+                    for idx in indices {
+                        if let Ok(Some(data)) = state.storage.get_asset(idx) {
+                            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                                assets.push(val);
+                            }
+                        }
+                    }
+                    return Ok(serde_json::json!(assets));
+                }
+            }
+
+            // Fallback: scan the asset column family for assets possessed by this entity
+            let entity_json = serde_json::json!(key);
+            let assets = state.storage.get_all_assets(10000)?;
+            let possessed: Vec<serde_json::Value> = assets
+                .into_iter()
+                .filter_map(|(_, data)| serde_json::from_slice::<serde_json::Value>(&data).ok())
+                .filter(|v| v.get("possessing_entity") == Some(&entity_json))
+                .collect();
+            Ok(serde_json::json!(possessed))
         }
         "getAssetsByOwner" => {
-            let _id = extract_string_param(params, 0)?;
-            Ok(serde_json::json!([]))
+            let id = extract_string_param(params, 0)?;
+            let key = identity::decode_base26(&id)
+                .ok_or_else(|| anyhow::anyhow!("Invalid identity"))?;
+
+            // Try the entity→asset index first
+            if let Ok(indices) = state.storage.get_assets_for_entity(&key) {
+                if !indices.is_empty() {
+                    let mut assets = Vec::new();
+                    for idx in indices {
+                        if let Ok(Some(data)) = state.storage.get_asset(idx) {
+                            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                                assets.push(val);
+                            }
+                        }
+                    }
+                    return Ok(serde_json::json!(assets));
+                }
+            }
+
+            // Fallback: scan for owned assets
+            let entity_json = serde_json::json!(key);
+            let assets = state.storage.get_all_assets(10000)?;
+            let owned: Vec<serde_json::Value> = assets
+                .into_iter()
+                .filter_map(|(_, data)| serde_json::from_slice::<serde_json::Value>(&data).ok())
+                .filter(|v| v.get("owning_entity") == Some(&entity_json))
+                .collect();
+            Ok(serde_json::json!(owned))
         }
         "getSpectrumStats" => {
             let tick = state.storage.get_current_tick()?.unwrap_or(0);
@@ -213,8 +292,12 @@ async fn dispatch_method(
         "getVotesForProposal" => Ok(serde_json::json!([])),
         "getVotesForVoter" => Ok(serde_json::json!([])),
         "getActiveIPOs" => {
-            // TODO: query active IPOs
-            Ok(serde_json::json!([]))
+            let ipos = state.storage.get_all_contract_ipos(1000)?;
+            let items: Vec<serde_json::Value> = ipos
+                .into_iter()
+                .filter_map(|(_, data)| serde_json::from_slice(&data).ok())
+                .collect();
+            Ok(serde_json::json!(items))
         }
         "getIPOBids" => {
             let index = extract_u32_param(params, 0)?;
@@ -273,9 +356,71 @@ async fn dispatch_method(
             Ok(serde_json::json!(txs))
         }
         "qonduit_search" => {
-            let _query = extract_string_param(params, 0)?;
-            // TODO: full-text search
-            Ok(serde_json::json!({"results": []}))
+            let query = extract_string_param(params, 0)?;
+            let q = query.trim().to_string();
+
+            if q.is_empty() {
+                return Ok(serde_json::json!({"results": []}));
+            }
+
+            let mut results = Vec::new();
+
+            // If numeric, search by tick
+            if q.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(tick) = q.parse::<u32>() {
+                    if let Some(data) = state.storage.get_tick(tick)? {
+                        if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                            results.push(serde_json::json!({"type": "tick", "data": val}));
+                        }
+                    }
+                }
+            }
+
+            // If hex hash (full 64 chars), search transaction
+            if q.len() == 64 && q.chars().all(|c| c.is_ascii_hexdigit()) {
+                if let Ok(bytes) = hex::decode(&q) {
+                    if bytes.len() == 32 {
+                        let mut hash = [0u8; 32];
+                        hash.copy_from_slice(&bytes);
+                        if let Some(data) = state.storage.get_tx(&hash)? {
+                            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                                results.push(serde_json::json!({"type": "transaction", "data": val}));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If uppercase A-Z, try as identity prefix or exact match
+            if q.chars().all(|c| c.is_ascii_uppercase()) {
+                // Exact identity lookup if 60 chars
+                if q.len() == 60 {
+                    if let Some(key) = identity::decode_base26(&q) {
+                        if let Some(data) = state.storage.get_entity(&key)? {
+                            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                                results.push(serde_json::json!({"type": "entity", "data": val}));
+                            }
+                        }
+                    }
+                }
+                // Prefix search (4-59 chars)
+                if q.len() >= 4 && q.len() < 60 {
+                    if let Ok(keys) = state.storage.get_all_entity_keys(10000) {
+                        for key in &keys {
+                            let identity_str = qonduit_core::identity::encode_base26(key);
+                            if identity_str.starts_with(&q) {
+                                if let Ok(Some(data)) = state.storage.get_entity(key) {
+                                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&data) {
+                                        results.push(serde_json::json!({"type": "entity", "data": val}));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(serde_json::json!({"results": results}))
         }
         "qonduit_getAssetHolders" => {
             Ok(serde_json::json!([]))
@@ -292,10 +437,32 @@ async fn dispatch_method(
             Ok(serde_json::json!(null))
         }
         "qonduit_getEntityTokens" => {
-            Ok(serde_json::json!([]))
+            let id = extract_string_param(params, 0)?;
+            let key = identity::decode_base26(&id)
+                .ok_or_else(|| anyhow::anyhow!("Invalid identity"))?;
+            match state.storage.get_spectrum_entry(&key)? {
+                Some(data) => {
+                    let entry: serde_json::Value = serde_json::from_slice(&data)?;
+                    let balance = entry.get("balance").cloned().unwrap_or(serde_json::json!(0));
+                    Ok(serde_json::json!({
+                        "identity": id,
+                        "balance": balance,
+                        "note": "Returns Qubic balance from spectrum. Token and contract balances not yet indexed."
+                    }))
+                }
+                None => Ok(serde_json::json!({
+                    "identity": id,
+                    "balance": 0,
+                    "note": "Entity not found in spectrum"
+                })),
+            }
         }
         "qonduit_getDeFiPositions" => {
-            Ok(serde_json::json!([]))
+            let _id = extract_string_param(params, 0)?;
+            Ok(serde_json::json!({
+                "positions": [],
+                "note": "DeFi position indexing is not yet implemented. This endpoint will be populated once DeFi contract state indexing is added."
+            }))
         }
         "qonduit_getEpochInfo" => {
             let epoch = state.storage.get_current_epoch()?.unwrap_or(0);
