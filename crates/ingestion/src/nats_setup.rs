@@ -26,70 +26,71 @@ fn stream_definitions() -> Vec<StreamDef> {
     vec![
         StreamDef {
             name: "QONDUIT_TICK",
-            subjects: vec!["QONDUIT.TICK"],
+            subjects: vec!["Q.*.QONDUIT.TICK"],
         },
         StreamDef {
             name: "QONDUIT_TX",
-            subjects: vec!["QONDUIT.TX"],
+            subjects: vec!["Q.*.QONDUIT.TX"],
         },
         StreamDef {
             name: "QONDUIT_ENTITY",
-            subjects: vec!["QONDUIT.ENTITY"],
+            subjects: vec!["Q.*.QONDUIT.ENTITY"],
         },
         StreamDef {
             name: "QONDUIT_COMPUTORS",
-            subjects: vec!["QONDUIT.COMPUTORS"],
+            subjects: vec!["Q.*.QONDUIT.COMPUTORS"],
         },
         StreamDef {
             name: "QONDUIT_CUSTMSG",
-            subjects: vec!["QONDUIT.CUSTMSG"],
+            subjects: vec!["Q.*.QONDUIT.CUSTMSG"],
         },
         StreamDef {
             name: "QONDUIT_ORACLE",
-            subjects: vec!["QONDUIT.ORACLE"],
+            subjects: vec!["Q.*.QONDUIT.ORACLE"],
         },
         StreamDef {
             name: "QONDUIT_ASSET",
-            subjects: vec!["QONDUIT.ASSET"],
+            subjects: vec!["Q.*.QONDUIT.ASSET"],
         },
         StreamDef {
             name: "QONDUIT_CONTRACT",
-            subjects: vec!["QONDUIT.CONTRACT"],
+            subjects: vec!["Q.*.QONDUIT.CONTRACT"],
         },
         StreamDef {
             name: "QONDUIT_TICKVOTE",
-            subjects: vec!["QONDUIT.TICKVOTE"],
+            subjects: vec!["Q.*.QONDUIT.TICKVOTE"],
         },
         StreamDef {
             name: "QONDUIT_CFNR",
-            subjects: vec!["QONDUIT.CFNR"],
+            subjects: vec!["Q.*.QONDUIT.CFNR"],
         },
         StreamDef {
             name: "QONDUIT_QUORUM",
-            subjects: vec!["QONDUIT.QUORUM"],
+            subjects: vec!["Q.*.QONDUIT.QUORUM"],
         },
         StreamDef {
             name: "QONDUIT_LOG",
-            subjects: vec!["QONDUIT.LOG"],
+            subjects: vec!["Q.*.QONDUIT.LOG"],
         },
         StreamDef {
             name: "QONDUIT_LOGDIGEST",
-            subjects: vec!["QONDUIT.LOGDIGEST"],
+            subjects: vec!["Q.*.QONDUIT.LOGDIGEST"],
         },
         StreamDef {
             name: "QONDUIT_MINING",
-            subjects: vec!["QONDUIT.MINING"],
+            subjects: vec!["Q.*.QONDUIT.MINING"],
         },
         StreamDef {
             name: "QONDUIT_SPECTRUM",
-            subjects: vec!["QONDUIT.SPECTRUM"],
+            subjects: vec!["Q.*.QONDUIT.SPECTRUM"],
         },
     ]
 }
 
 /// Ensure all required JetStream streams exist, creating any that are missing.
 ///
-/// Safe to call multiple times — existing streams are left untouched.
+/// If a stream exists but has the wrong subject patterns (e.g., `QONDUIT.TICK`
+/// instead of `Q.*.QONDUIT.TICK`), it will be deleted and recreated.
 pub async fn ensure_streams(nats: &Client) -> Result<()> {
     let js = jetstream::new(nats.clone());
 
@@ -98,26 +99,54 @@ pub async fn ensure_streams(nats: &Client) -> Result<()> {
 
         let config = jetstream::stream::Config {
             name: def.name.to_string(),
-            subjects,
+            subjects: subjects.clone(),
             max_bytes: MAX_BYTES,
             max_age: MAX_AGE,
             storage: jetstream::stream::StorageType::File,
             num_replicas: 1,
             discard: jetstream::stream::DiscardPolicy::Old,
-            // retain last value per subject for tick stream
             retention: jetstream::stream::RetentionPolicy::Limits,
             ..Default::default()
         };
 
-        // Try to create stream; if it already exists, that's fine
-        match js.create_stream(config).await {
-            Ok(_) => info!("JetStream stream {} created", def.name),
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("stream name already in use") || msg.contains("10058") {
-                    debug!("JetStream stream {} already exists", def.name);
-                } else {
-                    warn!("Failed to create stream {}: {e}", def.name);
+        // Try to get existing stream to check if subjects match
+        if let Ok(mut stream) = js.get_stream(def.name).await {
+            if let Ok(info) = stream.info().await {
+                let existing_subjects: Vec<String> = info
+                    .config
+                    .subjects
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+
+                if existing_subjects != subjects {
+                    info!(
+                        "Stream {} has outdated subjects {:?}, recreating with {:?}",
+                        def.name, existing_subjects, subjects
+                    );
+                    // Delete and recreate with correct subjects
+                    if let Err(e) = js.delete_stream(def.name).await {
+                        warn!("Failed to delete stream {}: {e}", def.name);
+                        continue;
+                    }
+                    match js.create_stream(config).await {
+                        Ok(_) => info!("JetStream stream {} recreated", def.name),
+                        Err(e) => warn!("Failed to recreate stream {}: {e}", def.name),
+                    }
+                }
+            }
+            // else: couldn't get info, skip migration check
+        } else {
+            // Stream doesn't exist, create it
+            match js.create_stream(config).await {
+                Ok(_) => info!("JetStream stream {} created", def.name),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("stream name already in use") || msg.contains("10058") {
+                        debug!("JetStream stream {} already exists", def.name);
+                    } else {
+                        warn!("Failed to create stream {}: {e}", def.name);
+                    }
                 }
             }
         }
