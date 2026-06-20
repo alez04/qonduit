@@ -272,8 +272,8 @@ impl IngestionClient {
                     info!("Current state: epoch={epoch}, tick={tick}");
                     self.current_epoch = epoch;
                     self.current_tick = tick;
-                    self.pipeline.node_tick.store(tick, std::sync::atomic::Ordering::Relaxed);
-                    self.pipeline.node_epoch.store(epoch, std::sync::atomic::Ordering::Relaxed);
+                    self.pipeline.node_tick.fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
+                    self.pipeline.node_epoch.fetch_max(epoch, std::sync::atomic::Ordering::Relaxed);
                     metrics::CURRENT_EPOCH.set(epoch as i64);
                     metrics::CURRENT_TICK.set(tick as i64);
                 }
@@ -342,8 +342,8 @@ impl IngestionClient {
                                     info!("Tick updated: epoch={epoch}, tick={tick}");
                                     self.current_epoch = epoch;
                                     self.current_tick = tick;
-                                    self.pipeline.node_tick.store(tick, std::sync::atomic::Ordering::Relaxed);
-                                    self.pipeline.node_epoch.store(epoch, std::sync::atomic::Ordering::Relaxed);
+                                    self.pipeline.node_tick.fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
+                                    self.pipeline.node_epoch.fetch_max(epoch, std::sync::atomic::Ordering::Relaxed);
                                     metrics::CURRENT_EPOCH.set(epoch as i64);
                                     metrics::CURRENT_TICK.set(tick as i64);
                                 }
