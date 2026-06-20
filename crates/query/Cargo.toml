@@ -20,3 +20,4 @@ futures-util = { workspace = true }
 prometheus = { workspace = true }
 hex = { workspace = true }
 once_cell = { workspace = true }
+scalar_api_reference = "0.2"

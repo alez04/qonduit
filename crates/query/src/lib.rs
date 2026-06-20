@@ -3,6 +3,7 @@
 //! Serves the public API that dApps and clients use to query indexed data.
 //! Compatible with Bob JSON-RPC methods as a superset.
 
+pub mod docs;
 pub mod metrics;
 pub mod rpc;
 pub mod rest;
@@ -45,6 +46,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(rest::routes())
         .merge(rpc::routes())
         .merge(ws::routes())
+        .merge(docs::docs_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
