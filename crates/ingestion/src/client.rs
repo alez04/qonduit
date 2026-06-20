@@ -5,8 +5,9 @@
 //! tries the next one. Successful connections are recorded so the manager
 //! can make better selections over time.
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -26,6 +27,15 @@ const MAX_PEERS_PER_ATTEMPT: usize = 8;
 
 /// How often to send CurrentTickInfo requests (in seconds).
 const TICK_REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How often to send entity requests (in seconds).
+const ENTITY_REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Max pending entity identities to avoid unbounded growth.
+const MAX_PENDING_ENTITIES: usize = 500;
+
+/// Max entity requests per batch.
+const ENTITY_BATCH_SIZE: usize = 10;
 
 /// Configuration for the ingestion client.
 #[derive(Debug, Clone)]
@@ -99,6 +109,8 @@ pub struct IngestionClient {
     pipeline: Arc<PipelineState>,
     current_epoch: u16,
     current_tick: u32,
+    /// Entity identities extracted from transactions, pending request.
+    pending_entities: Arc<Mutex<HashSet<[u8; 32]>>>,
 }
 
 impl IngestionClient {
@@ -120,6 +132,7 @@ impl IngestionClient {
             pipeline,
             current_epoch: 0,
             current_tick: 0,
+            pending_entities: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -277,7 +290,8 @@ impl IngestionClient {
     /// Read packets from the stream and publish them to NATS.
     ///
     /// Periodically sends CurrentTickInfo requests. Handles type 28 responses
-    /// inline when they arrive from the read loop.
+    /// inline when they arrive from the read loop. Extracts entity identities
+    /// from transactions and periodically requests entity data from the node.
     async fn read_loop(
         &mut self,
         stream: &mut TcpStream,
@@ -285,6 +299,9 @@ impl IngestionClient {
     ) -> Result<()> {
         let mut tick_request_interval = tokio::time::interval(TICK_REQUEST_INTERVAL);
         tick_request_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        let mut entity_request_interval = tokio::time::interval(ENTITY_REQUEST_INTERVAL);
+        entity_request_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -307,6 +324,28 @@ impl IngestionClient {
                                     metrics::CURRENT_TICK.set(tick as i64);
                                 }
                                 continue;
+                            }
+
+                            // Handle RespondEntity (type 32) inline — publish to NATS
+                            if msg_type == 32 {
+                                if let Err(e) = self.decoder.decode_and_publish(msg_type, dejavu, &payload, self.current_epoch).await {
+                                    warn!("Entity decode/publish error: {e:#}");
+                                }
+                                continue;
+                            }
+
+                            // For transactions (type 24), extract source/destination identities
+                            if msg_type == 24 && payload.len() >= 65 {
+                                let mut source = [0u8; 32];
+                                source.copy_from_slice(&payload[1..33]);
+                                let mut destination = [0u8; 32];
+                                destination.copy_from_slice(&payload[33..65]);
+
+                                let mut pending = self.pending_entities.lock().unwrap();
+                                if pending.len() < MAX_PENDING_ENTITIES {
+                                    pending.insert(source);
+                                    pending.insert(destination);
+                                }
                             }
 
                             debug!(
@@ -334,6 +373,31 @@ impl IngestionClient {
                     if let Err(e) = protocol::send_raw(stream, 27, &[], rand::random::<u32>().max(1)).await {
                         warn!("Failed to send tick info request: {e:#}");
                         return Err(e);
+                    }
+                }
+                // Periodically request entities for pending identities
+                _ = entity_request_interval.tick() => {
+                    let batch: Vec<[u8; 32]> = {
+                        let mut pending = self.pending_entities.lock().unwrap();
+                        let take_n = pending.iter().take(ENTITY_BATCH_SIZE).cloned().collect::<Vec<_>>();
+                        for id in &take_n {
+                            pending.remove(id);
+                        }
+                        take_n
+                    };
+
+                    for identity in &batch {
+                        match protocol::request_entity(stream, identity).await {
+                            Ok(data) => {
+                                // Publish the entity response to NATS
+                                if let Err(e) = self.decoder.decode_and_publish(32, 0, &data, self.current_epoch).await {
+                                    debug!("Entity publish error: {e:#}");
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Entity request failed for identity: {e:#}");
+                            }
+                        }
                     }
                 }
             }
