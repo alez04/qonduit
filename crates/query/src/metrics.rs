@@ -155,11 +155,21 @@ pub static ENTITIES_INDEXED_TOTAL: once_cell::sync::Lazy<IntGauge> = once_cell::
     g
 });
 
-/// Average indexing rate in ticks per second.
-pub static INDEXING_RATE: once_cell::sync::Lazy<IntGauge> = once_cell::sync::Lazy::new(|| {
+/// Average indexing rate in ticks per second (all-time).
+pub static INDEXING_RATE_AVG: once_cell::sync::Lazy<IntGauge> = once_cell::sync::Lazy::new(|| {
     let g = IntGauge::with_opts(opts!(
-        "qonduit_indexing_rate_ticks_per_sec",
-        "Average indexing rate in ticks per second"
+        "qonduit_indexing_rate_avg_ticks_per_sec",
+        "Average indexing rate in ticks per second (all-time)"
+    )).unwrap();
+    registry().register(Box::new(g.clone())).unwrap();
+    g
+});
+
+/// Current indexing rate in ticks per second (rolling window ~3s).
+pub static INDEXING_RATE_CURRENT: once_cell::sync::Lazy<IntGauge> = once_cell::sync::Lazy::new(|| {
+    let g = IntGauge::with_opts(opts!(
+        "qonduit_indexing_rate_current_ticks_per_sec",
+        "Current indexing rate in ticks per second (rolling window)"
     )).unwrap();
     registry().register(Box::new(g.clone())).unwrap();
     g
@@ -418,7 +428,8 @@ pub fn update_pipeline_gauges(pipeline: &qonduit_core::PipelineState) {
     // Uptime and rate
     let status = pipeline.status();
     UPTIME_SECONDS.set(status.uptime_seconds as i64);
-    INDEXING_RATE.set((status.avg_indexing_rate * 1000.0) as i64); // store as millis
+    INDEXING_RATE_AVG.set((status.avg_indexing_rate * 1000.0) as i64); // stored as millis
+    INDEXING_RATE_CURRENT.set((status.current_indexing_rate * 1000.0) as i64); // stored as millis
     ETA_TO_LIVE_SECONDS.set(status.estimated_seconds_to_live as i64);
 
     // Epoch progress (estimated)

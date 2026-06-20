@@ -47,6 +47,12 @@ pub struct PipelineState {
     pub indexing_start_time: AtomicU64,
     /// Total ticks indexed (monotonically increasing, used for rate calculation).
     pub total_ticks_indexed: AtomicU64,
+    /// Rolling window: timestamp of last rate measurement.
+    pub rate_window_last_time: AtomicU64,
+    /// Rolling window: total_ticks_indexed at last rate measurement.
+    pub rate_window_last_indexed: AtomicU64,
+    /// Current indexing rate in ticks/sec (computed over rolling window).
+    pub current_indexing_rate: AtomicU64,
 
     // ------------------------------------------------------------------
     // Backfill progress tracking
@@ -105,6 +111,8 @@ pub struct PipelineStatusResponse {
     pub estimated_seconds_to_live: u64,
     /// Average indexing rate in ticks per second (computed over uptime).
     pub avg_indexing_rate: f64,
+    /// Current indexing rate in ticks per second (rolling window, ~3s).
+    pub current_indexing_rate: f64,
     // ------------------------------------------------------------------
     // Backfill progress
     // ------------------------------------------------------------------
@@ -147,6 +155,9 @@ impl PipelineState {
             entity_lag: AtomicU64::new(0),
             indexing_start_time: AtomicU64::new(now),
             total_ticks_indexed: AtomicU64::new(0),
+            rate_window_last_time: AtomicU64::new(now),
+            rate_window_last_indexed: AtomicU64::new(0),
+            current_indexing_rate: AtomicU64::new(0),
             backfill_running: AtomicBool::new(false),
             backfill_ticks_completed: AtomicU64::new(0),
             backfill_txs_discovered: AtomicU64::new(0),
@@ -184,14 +195,36 @@ impl PipelineState {
             "live".to_string()
         };
 
-        // Calculate average indexing rate and estimated time to live
+        // Calculate indexing rate using a rolling window approach.
+        // This avoids the dilution problem where a burst of catch-up work
+        // gets averaged over a long uptime, showing near-zero rates.
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let start_time = self.indexing_start_time.load(Ordering::Relaxed);
         let total_indexed = self.total_ticks_indexed.load(Ordering::Relaxed);
 
+        let last_time = self.rate_window_last_time.load(Ordering::Relaxed);
+        let last_indexed = self.rate_window_last_indexed.load(Ordering::Relaxed);
+        let window_elapsed = now.saturating_sub(last_time);
+
+        // Only recalculate if at least 3 seconds have passed (avoids division noise)
+        if window_elapsed >= 3 {
+            let delta_indexed = total_indexed.saturating_sub(last_indexed);
+            let rate = if window_elapsed > 0 {
+                delta_indexed * 1000 / window_elapsed // stored as milli-ticks/sec
+            } else {
+                0
+            };
+            self.current_indexing_rate.store(rate, Ordering::Relaxed);
+            self.rate_window_last_time.store(now, Ordering::Relaxed);
+            self.rate_window_last_indexed.store(total_indexed, Ordering::Relaxed);
+        }
+
+        let current_rate = self.current_indexing_rate.load(Ordering::Relaxed) as f64 / 1000.0;
+
+        // Also compute the all-time average for reference
+        let start_time = self.indexing_start_time.load(Ordering::Relaxed);
         let elapsed = now.saturating_sub(start_time);
         let avg_indexing_rate = if elapsed > 0 {
             total_indexed as f64 / elapsed as f64
@@ -200,8 +233,10 @@ impl PipelineState {
         };
 
         let ticks_behind = behind.max(0) as u64;
-        let estimated_seconds_to_live = if avg_indexing_rate > 0.0 && ticks_behind > 0 {
-            (ticks_behind as f64 / avg_indexing_rate) as u64
+        // Use the current (rolling) rate for ETA, falling back to avg
+        let rate_for_eta = if current_rate > 0.0 { current_rate } else { avg_indexing_rate };
+        let estimated_seconds_to_live = if rate_for_eta > 0.0 && ticks_behind > 0 {
+            (ticks_behind as f64 / rate_for_eta) as u64
         } else {
             0
         };
@@ -223,6 +258,7 @@ impl PipelineState {
             uptime_seconds: self.started_at.elapsed().as_secs(),
             estimated_seconds_to_live,
             avg_indexing_rate,
+            current_indexing_rate: current_rate,
             backfill_running: self.backfill_running.load(Ordering::Relaxed),
             backfill_ticks_completed: self.backfill_ticks_completed.load(Ordering::Relaxed),
             backfill_txs_discovered: self.backfill_txs_discovered.load(Ordering::Relaxed),
