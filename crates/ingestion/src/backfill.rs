@@ -95,6 +95,7 @@ impl Default for BackfillConfig {
 /// (EndResponse) packets: they could mean "tick data not available" (for type 16)
 /// or "end of transaction list" (for type 29).
 #[derive(Debug)]
+#[allow(dead_code)]
 enum ExpectedResponse {
     /// Expecting type 8 (tick data) or type 35 (tick not available).
     TickData { tick: u32, dejavu: u32 },
