@@ -43,73 +43,55 @@ pub fn routes() -> Router<Arc<AppState>> {
 
 async fn ws_tick(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
+    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = match query.epoch {
-        Some(epoch) => format!("Q.{epoch}.QONDUIT.TICK"),
-        None => "Q.*.QONDUIT.TICK".to_string(),
-    };
+    let subject = "QONDUIT.TICK".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
 async fn ws_tx(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
+    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = match query.epoch {
-        Some(epoch) => format!("Q.{epoch}.QONDUIT.TX"),
-        None => "Q.*.QONDUIT.TX".to_string(),
-    };
+    let subject = "QONDUIT.TX".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
 async fn ws_entity(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
+    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = match query.epoch {
-        Some(epoch) => format!("Q.{epoch}.QONDUIT.ENTITY"),
-        None => "Q.*.QONDUIT.ENTITY".to_string(),
-    };
+    let subject = "QONDUIT.ENTITY".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
 async fn ws_spectrum(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
+    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = match query.epoch {
-        Some(epoch) => format!("Q.{epoch}.QONDUIT.SPECTRUM"),
-        None => "Q.*.QONDUIT.SPECTRUM".to_string(),
-    };
+    let subject = "QONDUIT.SPECTRUM".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
 async fn ws_custom_message(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
+    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = match query.epoch {
-        Some(epoch) => format!("Q.{epoch}.QONDUIT.CUSTMSG"),
-        None => "Q.*.QONDUIT.CUSTMSG".to_string(),
-    };
+    let subject = "QONDUIT.CUSTMSG".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
 async fn ws_contract_fn(
     ws: WebSocketUpgrade,
-    Query(query): Query<WsQuery>,
+    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let subject = match query.epoch {
-        Some(epoch) => format!("Q.{epoch}.QONDUIT.CFNR"),
-        None => "Q.*.QONDUIT.CFNR".to_string(),
-    };
+    let subject = "QONDUIT.CFNR".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 

@@ -140,6 +140,20 @@ impl Indexer {
                 .put_tx_for_entity(&key, tx.tick, tx_index, &hash_bytes)?;
         }
 
+        // Index by destination entity
+        if let Some(dest_key) = qonduit_core::decode_base26(&tx.destination_identity) {
+            self.storage
+                .put_tx_for_entity(&dest_key, tx.tick, tx_index, &hash_bytes)?;
+        } else if let Some(dst) = hex::decode(&tx.destination_hex)
+            .ok()
+            .filter(|b| b.len() == 32)
+        {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&dst);
+            self.storage
+                .put_tx_for_entity(&key, tx.tick, tx_index, &hash_bytes)?;
+        }
+
         debug!(tick = tx.tick, hash = %tx.hash, "Indexed transaction");
 
         // Update pipeline state

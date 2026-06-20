@@ -100,7 +100,7 @@ impl ColdStorage {
     fn export_transactions(&self, warm: &WarmStorage, dir: &Path, range: (u32, u32)) -> Result<()> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("tick", DataType::UInt32, false),
-            Field::new("tx_type", DataType::UInt8, false),
+            Field::new("input_type", DataType::UInt16, false),
             Field::new("source", DataType::Utf8, false),
             Field::new("destination", DataType::Utf8, false),
             Field::new("amount", DataType::Int64, false),
@@ -108,7 +108,7 @@ impl ColdStorage {
         ]));
 
         let mut ticks = Vec::new();
-        let mut tx_types = Vec::new();
+        let mut input_types = Vec::new();
         let mut sources = Vec::new();
         let mut destinations = Vec::new();
         let mut amounts = Vec::new();
@@ -120,7 +120,7 @@ impl ColdStorage {
                 if let Ok(Some(data)) = warm.get_tx(&hash) {
                     let val: serde_json::Value = serde_json::from_slice(&data)?;
                     ticks.push(tick_num);
-                    tx_types.push(val["tx_type"].as_u64().unwrap_or(0) as u8);
+                    input_types.push(val["input_type"].as_u64().unwrap_or(0) as u16);
                     sources.push(val["source_hex"].as_str().unwrap_or("").to_string());
                     destinations.push(val["destination_hex"].as_str().unwrap_or("").to_string());
                     amounts.push(val["amount"].as_i64().unwrap_or(0));
@@ -137,7 +137,7 @@ impl ColdStorage {
             schema.clone(),
             vec![
                 Arc::new(UInt32Array::from(ticks)),
-                Arc::new(UInt8Array::from(tx_types)),
+                Arc::new(UInt16Array::from(input_types)),
                 Arc::new(StringArray::from(sources)),
                 Arc::new(StringArray::from(destinations)),
                 Arc::new(Int64Array::from(amounts)),

@@ -248,7 +248,7 @@ impl PacketDecoder {
         let tx = decoders::decode_transaction(payload)?;
         debug!(
             "Decoded transaction: hash={} type={} amount={}",
-            tx.hash, tx.tx_type, tx.amount
+            tx.hash, tx.input_type_name, tx.amount
         );
         self.publisher.publish_tx(current_epoch, &tx).await?;
         Ok(())
@@ -287,10 +287,10 @@ impl PacketDecoder {
     async fn decode_contract_ipo(
         &self,
         payload: &[u8],
-        dejavu: u32,
+        _dejavu: u32,
         current_epoch: u16,
     ) -> Result<()> {
-        let ipo = decoders::decode_contract_ipo(payload, dejavu)?;
+        let ipo = decoders::decode_contract_ipo(payload)?;
         debug!(
             "Decoded contract IPO: contract_index={}, bids={}",
             ipo.contract_index,

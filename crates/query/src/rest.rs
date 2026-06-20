@@ -48,9 +48,14 @@ pub fn routes() -> Router<Arc<AppState>> {
 
 // --- Helpers ---
 
-/// Convert a storage error into a 500 response.
+/// Convert a storage error into a 500 JSON response.
 fn storage_err(e: anyhow::Error) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, format!("Storage error: {e}")).into_response()
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({"error": "Storage error", "message": e.to_string()}).to_string(),
+    )
+        .into_response()
 }
 
 /// Return raw JSON bytes with correct content-type, or 404.

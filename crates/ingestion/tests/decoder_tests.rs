@@ -74,26 +74,24 @@ fn test_decode_entity_valid() {
 #[test]
 fn test_decode_transaction_valid() {
     let mut payload = vec![0u8; 224]; // 80 header + 80 input + 64 sig
-    // tx_type = 0 (transfer)
-    payload[0] = 0;
-    // source (32 bytes of 0x01)
-    payload[1..33].fill(0x01);
-    // destination (32 bytes of 0x02)
-    payload[33..65].fill(0x02);
-    // amount = 1000
-    payload[65..73].copy_from_slice(&1000i64.to_le_bytes());
-    // tick = 50000
-    payload[73..77].copy_from_slice(&50000u32.to_le_bytes());
-    // input_size = 80
-    payload[77..79].copy_from_slice(&80u16.to_le_bytes());
-    // input_type = 0
-    payload[79..81].copy_from_slice(&0u16.to_le_bytes());
+    // source (32 bytes of 0x01) at offset 0
+    payload[0..32].fill(0x01);
+    // destination (32 bytes of 0x02) at offset 32
+    payload[32..64].fill(0x02);
+    // amount = 1000 at offset 64
+    payload[64..72].copy_from_slice(&1000i64.to_le_bytes());
+    // tick = 50000 at offset 72
+    payload[72..76].copy_from_slice(&50000u32.to_le_bytes());
+    // input_type = 0 at offset 76
+    payload[76..78].copy_from_slice(&0u16.to_le_bytes());
+    // input_size = 80 at offset 78
+    payload[78..80].copy_from_slice(&80u16.to_le_bytes());
 
     let result = decoders::decode_transaction(&payload).unwrap();
-    assert_eq!(result.tx_type, 0);
     assert_eq!(result.amount, 1000);
     assert_eq!(result.tick, 50000);
     assert_eq!(result.input_size, 80);
+    assert_eq!(result.input_type, 0);
     assert!(!result.source_identity.is_empty());
     assert!(!result.destination_identity.is_empty());
 }

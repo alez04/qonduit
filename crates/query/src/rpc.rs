@@ -54,16 +54,29 @@ async fn handle_rpc(
             error: None,
             id,
         }),
-        Err(e) => Json(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(JsonRpcError {
-                code: -32000,
-                message: e.to_string(),
-                data: None,
-            }),
-            id,
-        }),
+        Err(e) => {
+            let msg = e.to_string();
+            let code = if msg.starts_with("Method not found") {
+                -32601
+            } else if msg.starts_with("Missing params")
+                || msg.starts_with("Params must be array")
+                || msg.starts_with("Missing param at index")
+            {
+                -32602
+            } else {
+                -32000
+            };
+            Json(JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(JsonRpcError {
+                    code,
+                    message: msg,
+                    data: None,
+                }),
+                id,
+            })
+        }
     }
 }
 

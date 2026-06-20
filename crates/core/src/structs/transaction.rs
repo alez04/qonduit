@@ -77,11 +77,19 @@ impl InputType {
 }
 
 /// Raw transaction header (80 bytes) from the wire.
+///
+/// Matches the C++ `Transaction` struct layout:
+/// ```text
+/// [0..32]   source (m256i)
+/// [32..64]  destination (m256i)
+/// [64..72]  amount (i64)
+/// [72..76]  tick (u32)
+/// [76..78]  input_type (u16)
+/// [78..80]  input_size (u16)
+/// ```
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct RawTransactionHeader {
-    /// Transaction type.
-    pub tx_type: u8,
     /// Sender public key.
     pub source: [u8; 32],
     /// Destination public key.
@@ -90,10 +98,10 @@ pub struct RawTransactionHeader {
     pub amount: i64,
     /// Target tick.
     pub tick: u32,
+    /// Input type (determines transaction type).
+    pub input_type: u16,
     /// Input payload size.
     pub input_size: u16,
-    /// Input type.
-    pub input_type: u16,
 }
 
 /// Decoded transaction for storage/query.
@@ -103,7 +111,6 @@ pub struct RawTransactionHeader {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub hash: String,
-    pub tx_type: u8,
     pub source_hex: String,
     pub source_identity: String,
     pub destination_hex: String,

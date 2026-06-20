@@ -425,7 +425,6 @@ pub fn openapi_spec() -> serde_json::Value {
                     "type": "object",
                     "properties": {
                         "hash": { "type": "string" },
-                        "tx_type": { "type": "integer" },
                         "source_hex": { "type": "string" },
                         "source_identity": { "type": "string" },
                         "destination_hex": { "type": "string" },

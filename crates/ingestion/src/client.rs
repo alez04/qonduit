@@ -335,11 +335,12 @@ impl IngestionClient {
                             }
 
                             // For transactions (type 24), extract source/destination identities
-                            if msg_type == 24 && payload.len() >= 65 {
+                            // Wire layout: [0..32] source, [32..64] destination
+                            if msg_type == 24 && payload.len() >= 64 {
                                 let mut source = [0u8; 32];
-                                source.copy_from_slice(&payload[1..33]);
+                                source.copy_from_slice(&payload[0..32]);
                                 let mut destination = [0u8; 32];
-                                destination.copy_from_slice(&payload[33..65]);
+                                destination.copy_from_slice(&payload[32..64]);
 
                                 let mut pending = self.pending_entities.lock().unwrap();
                                 if pending.len() < MAX_PENDING_ENTITIES {

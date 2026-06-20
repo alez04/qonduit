@@ -84,22 +84,27 @@ pub fn decode_transaction(payload: &[u8]) -> Result<Transaction> {
         );
     }
 
-    let tx_type = payload[0];
-
+    // Wire layout matches C++ Transaction struct:
+    // [0..32]   source (m256i)
+    // [32..64]  destination (m256i)
+    // [64..72]  amount (i64 LE)
+    // [72..76]  tick (u32 LE)
+    // [76..78]  input_type (u16 LE)
+    // [78..80]  input_size (u16 LE)
     let mut source = [0u8; 32];
-    source.copy_from_slice(&payload[1..33]);
+    source.copy_from_slice(&payload[0..32]);
 
     let mut destination = [0u8; 32];
-    destination.copy_from_slice(&payload[33..65]);
+    destination.copy_from_slice(&payload[32..64]);
 
     let amount = i64::from_le_bytes([
-        payload[65], payload[66], payload[67], payload[68], payload[69], payload[70], payload[71],
-        payload[72],
+        payload[64], payload[65], payload[66], payload[67], payload[68], payload[69], payload[70],
+        payload[71],
     ]);
 
-    let tick = u32::from_le_bytes([payload[73], payload[74], payload[75], payload[76]]);
-    let input_size = u16::from_le_bytes([payload[77], payload[78]]);
-    let input_type = u16::from_le_bytes([payload[79], payload[80]]);
+    let tick = u32::from_le_bytes([payload[72], payload[73], payload[74], payload[75]]);
+    let input_type = u16::from_le_bytes([payload[76], payload[77]]);
+    let input_size = u16::from_le_bytes([payload[78], payload[79]]);
 
     // Input payload starts at offset 80
     let input_end = TX_HEADER_SIZE + input_size as usize;
@@ -130,7 +135,6 @@ pub fn decode_transaction(payload: &[u8]) -> Result<Transaction> {
 
     Ok(Transaction {
         hash,
-        tx_type,
         source_hex: hex::encode(source),
         source_identity: encode_base26(&source),
         destination_hex: hex::encode(destination),
@@ -248,9 +252,9 @@ pub fn decode_entity(payload: &[u8]) -> Result<EntityData> {
 /// 20      8     timeSinceLastVotingTick (u64) [optional]
 /// ```
 pub fn decode_current_tick_info(payload: &[u8]) -> Result<CurrentTickInfo> {
-    if payload.len() < 14 {
+    if payload.len() < 16 {
         anyhow::bail!(
-            "CurrentTickInfo payload too small: {} < 14",
+            "CurrentTickInfo payload too small: {} < 16",
             payload.len()
         );
     }
@@ -355,7 +359,7 @@ pub fn decode_system_info(payload: &[u8]) -> Result<SystemInfoReply> {
 /// [21640..27048] prices[676] (i64 each)
 /// ```
 /// Total payload: 27048 bytes.
-pub fn decode_contract_ipo(payload: &[u8], contract_index: u32) -> Result<ContractIpo> {
+pub fn decode_contract_ipo(payload: &[u8]) -> Result<ContractIpo> {
     // Minimum: 8 (header) + 676*32 (keys) + 676*8 (prices) = 27048
     if payload.len() < 27048 {
         anyhow::bail!(
@@ -363,6 +367,8 @@ pub fn decode_contract_ipo(payload: &[u8], contract_index: u32) -> Result<Contra
             payload.len()
         );
     }
+
+    let contract_index = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
 
     // Skip contractIndex + tick (8 bytes)
     let keys_offset = 8;
