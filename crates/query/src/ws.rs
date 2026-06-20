@@ -1,7 +1,9 @@
 //! WebSocket subscription endpoints.
 //!
 //! Supports real-time streaming of blockchain events via WebSocket.
-//! Topics: tick, tx, entity, spectrum, custom-message, contract-fn.
+//! Topics: tick, tx, entity, spectrum, custom-message, contract-fn,
+//! computors, asset, contract, tickvote, oracle, log, quorum,
+//! logdigest, mining.
 
 use std::sync::Arc;
 
@@ -31,6 +33,15 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/ws/spectrum", get(ws_spectrum))
         .route("/ws/custom-message", get(ws_custom_message))
         .route("/ws/contract-fn", get(ws_contract_fn))
+        .route("/ws/computors", get(ws_computors))
+        .route("/ws/asset", get(ws_asset))
+        .route("/ws/contract", get(ws_contract))
+        .route("/ws/tickvote", get(ws_tickvote))
+        .route("/ws/oracle", get(ws_oracle))
+        .route("/ws/log", get(ws_log))
+        .route("/ws/quorum", get(ws_quorum))
+        .route("/ws/logdigest", get(ws_logdigest))
+        .route("/ws/mining", get(ws_mining))
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +93,78 @@ async fn ws_contract_fn(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.CFNR".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_computors(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.COMPUTORS".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_asset(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.ASSET".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_contract(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.CONTRACT".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_tickvote(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.TICKVOTE".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_oracle(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.ORACLE".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_log(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.LOG".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_quorum(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.QUORUM".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_logdigest(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.LOGDIGEST".to_string();
+    ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
+}
+
+async fn ws_mining(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let subject = "QONDUIT.MINING".to_string();
     ws.on_upgrade(move |socket| handle_ws_subscription(socket, state, subject))
 }
 
