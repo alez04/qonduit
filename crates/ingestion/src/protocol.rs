@@ -58,9 +58,8 @@ pub async fn exchange_public_peers(
             Ok(Ok((msg_type, _dejavu, resp_payload))) => {
                 if msg_type == 0 && resp_payload.len() >= 16 {
                     let mut peers = [[0u8; 4]; 4];
-                    for i in 0..4 {
-                        let off = i * 4;
-                        peers[i] = [resp_payload[off], resp_payload[off+1], resp_payload[off+2], resp_payload[off+3]];
+                    for (i, chunk) in resp_payload[..16].chunks(4).enumerate() {
+                        peers[i] = [chunk[0], chunk[1], chunk[2], chunk[3]];
                     }
                     info!("Received peer exchange response with {} peers", peers.iter().filter(|p| **p != [0u8; 4]).count());
                     return Ok(peers);
