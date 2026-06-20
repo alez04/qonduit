@@ -8,8 +8,9 @@ use async_nats::jetstream;
 use async_nats::Client;
 use tracing::{debug, info, warn};
 
-/// Duration for stream retention: 7 days.
-const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+/// Duration for stream retention: 30 days (messages are critical for catch-up).
+/// The processor needs historical data to catch up from cold start.
+const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
 
 /// Default max bytes per stream (10 GiB).
 const MAX_BYTES: i64 = 10 * 1024 * 1024 * 1024;

@@ -5,3 +5,5 @@ target/
 install.sh
 docker-compose.yml
 docker/
+data/
+.env
