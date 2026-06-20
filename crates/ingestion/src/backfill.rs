@@ -95,7 +95,6 @@ impl Default for BackfillConfig {
 /// (EndResponse) packets: they could mean "tick data not available" (for type 16)
 /// or "end of transaction list" (for type 29).
 #[derive(Debug)]
-#[allow(dead_code)]
 enum ExpectedResponse {
     /// Expecting type 8 (tick data) or type 35 (tick not available).
     TickData { tick: u32, dejavu: u32 },
@@ -600,75 +599,75 @@ impl BackfillWorker {
                 Ok(Ok((msg_type, dejavu, payload))) => {
                     match msg_type {
                         8 => {
-                            // BROADCAST_FUTURE_TICK_DATA: tick data response
-                            // Skip broadcasts from the live node (dejavu won't match our request)
-                            if expected.front().is_none_or(|e| e.dejavu() != dejavu) {
-                                debug!("Worker {}: skipping broadcast type 8 dejavu={dejavu}", self.worker_id);
-                                continue;
-                            }
+                            // BROADCAST_FUTURE_TICK_DATA: tick data response.
+                            // Search the deque by dejavu (not just front) because interleaved
+                            // tx requests can put TransactionEnd entries ahead of TickData.
+                            if let Some(idx) = expected.iter().position(|e| e.dejavu() == dejavu) {
+                                let resp_tick = if payload.len() >= 8 {
+                                    u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]])
+                                } else {
+                                    // Payload too short - remove and count as failure
+                                    expected.remove(idx);
+                                    self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
+                                    Self::fill_pipeline(
+                                        &self.shared, self.worker_id, self.worker_end,
+                                        &mut stream, &mut next_tick_to_request, &mut expected,
+                                        &mut consecutive_failures, &mut skip_size,
+                                    ).await?;
+                                    continue;
+                                };
 
-                            let resp_tick = if payload.len() >= 8 {
-                                u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]])
-                            } else {
-                                // Payload too short - skip
-                                expected.pop_front();
-                                self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
+                                // Remove the matching TickData entry
+                                expected.remove(idx);
+
+                                // Reset failure tracking
+                                consecutive_failures = 0;
+                                skip_size = FAILURE_SKIP_INITIAL;
+
+                                // Decode and publish tick data
+                                if let Err(e) = self.decode_and_publish(8, &payload, epoch).await {
+                                    debug!("Worker {}: tick data decode error for {resp_tick}: {e:#}", self.worker_id);
+                                } else {
+                                    self.shared.ticks_discovered.fetch_add(1, Ordering::Relaxed);
+                                }
+
+                                // Immediately send type 29 (transaction request) for this tick
+                                let tx_dejavu = rand::random::<u32>().max(1);
+                                if let Err(e) = protocol::send_raw(
+                                    &mut stream,
+                                    29,
+                                    &resp_tick.to_le_bytes(),
+                                    tx_dejavu,
+                                )
+                                .await
+                                {
+                                    debug!("Worker {}: failed to send tx request for {resp_tick}: {e:#}", self.worker_id);
+                                } else {
+                                    expected.push_back(ExpectedResponse::TransactionEnd { tick: resp_tick, dejavu: tx_dejavu });
+                                }
+
+                                self.shared.ticks_completed.fetch_add(1, Ordering::Relaxed);
+                                self.pipeline.indexed_tick.fetch_max(resp_tick, Ordering::Relaxed);
+
+                                // Refill the pipeline with more type 16 requests
                                 Self::fill_pipeline(
                                     &self.shared, self.worker_id, self.worker_end,
                                     &mut stream, &mut next_tick_to_request, &mut expected,
                                     &mut consecutive_failures, &mut skip_size,
                                 ).await?;
-                                continue;
-                            };
-
-                            // Pop the matching TickData entry from the FIFO queue
-                            expected.pop_front();
-
-                            // Reset failure tracking
-                            consecutive_failures = 0;
-                            skip_size = FAILURE_SKIP_INITIAL;
-
-                            // Decode and publish tick data
-                            if let Err(e) = self.decode_and_publish(8, &payload, epoch).await {
-                                debug!("Worker {}: tick data decode error for {resp_tick}: {e:#}", self.worker_id);
                             } else {
-                                self.shared.ticks_discovered.fetch_add(1, Ordering::Relaxed);
+                                // Dejavu doesn't match any pending request — broadcast from live node, skip
+                                debug!("Worker {}: skipping broadcast type 8 dejavu={dejavu}", self.worker_id);
                             }
-
-                            // Immediately send type 29 (transaction request) for this tick
-                            let tx_dejavu = rand::random::<u32>().max(1);
-                            if let Err(e) = protocol::send_raw(
-                                &mut stream,
-                                29,
-                                &resp_tick.to_le_bytes(),
-                                tx_dejavu,
-                            )
-                            .await
-                            {
-                                debug!("Worker {}: failed to send tx request for {resp_tick}: {e:#}", self.worker_id);
-                            } else {
-                                expected.push_back(ExpectedResponse::TransactionEnd { tick: resp_tick, dejavu: tx_dejavu });
-                            }
-
-                            self.shared.ticks_completed.fetch_add(1, Ordering::Relaxed);
-                            self.pipeline.indexed_tick.fetch_max(resp_tick, Ordering::Relaxed);
-
-                            // Refill the pipeline with more type 16 requests
-                            Self::fill_pipeline(
-                                &self.shared, self.worker_id, self.worker_end,
-                                &mut stream, &mut next_tick_to_request, &mut expected,
-                                &mut consecutive_failures, &mut skip_size,
-                            ).await?;
                         }
                         35 => {
-                            // END_RESPONSE: either "tick data not available" or
-                            // "end of transaction list" — match by dejavu to handle interleaved broadcasts.
-                            if expected.front().is_some_and(|e| e.dejavu() == dejavu) {
-                                match expected.pop_front().unwrap() {
-                                    ExpectedResponse::TransactionEnd { .. } => {
+                            // END_RESPONSE: search deque by dejavu to handle interleaved requests.
+                            if let Some(idx) = expected.iter().position(|e| e.dejavu() == dejavu) {
+                                match expected.remove(idx) {
+                                    Some(ExpectedResponse::TransactionEnd { .. }) => {
                                         // Normal end-of-transactions, nothing to do
                                     }
-                                    ExpectedResponse::TickData { .. } => {
+                                    Some(ExpectedResponse::TickData { .. }) => {
                                         // Tick data not available on this node
                                         consecutive_failures += 1;
                                         self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
@@ -678,10 +677,11 @@ impl BackfillWorker {
                                             &mut consecutive_failures, &mut skip_size,
                                         ).await?;
                                     }
+                                    None => {}
                                 }
                             } else {
-                                // Dejavu doesn't match front — might be a broadcast EndResponse, skip
-                                debug!("Worker {}: skipping type 35 with dejavu={dejavu} (not matching front)", self.worker_id);
+                                // Dejavu doesn't match any pending request — broadcast EndResponse, skip
+                                debug!("Worker {}: skipping type 35 with dejavu={dejavu} (no match in queue)", self.worker_id);
                             }
                         }
                         24 => {
@@ -693,9 +693,9 @@ impl BackfillWorker {
                             }
                         }
                         54 => {
-                            // TRY_AGAIN — match by dejavu, count as failure
-                            if expected.front().is_some_and(|e| e.dejavu() == dejavu) {
-                                if let Some(ExpectedResponse::TickData { .. }) = expected.pop_front() {
+                            // TRY_AGAIN — search deque by dejavu, count as failure
+                            if let Some(idx) = expected.iter().position(|e| e.dejavu() == dejavu) {
+                                if let Some(ExpectedResponse::TickData { .. }) = expected.remove(idx) {
                                     consecutive_failures += 1;
                                     self.shared.ticks_failed.fetch_add(1, Ordering::Relaxed);
                                     Self::fill_pipeline(
