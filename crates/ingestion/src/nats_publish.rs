@@ -38,6 +38,9 @@ pub struct TickVote {
 #[derive(Debug, Clone)]
 pub struct NatsPublisher {
     js: jetstream::Context,
+    /// When true, publishes fire-and-forget (skip ack wait).
+    /// Use during catch-up to maximize throughput.
+    fire_and_forget: bool,
 }
 
 impl NatsPublisher {
@@ -45,24 +48,40 @@ impl NatsPublisher {
     pub fn new(nats: async_nats::Client) -> Self {
         Self {
             js: jetstream::new(nats),
+            fire_and_forget: false,
         }
     }
 
     /// Create a publisher directly from a JetStream context.
     pub fn from_context(js: jetstream::Context) -> Self {
-        Self { js }
+        Self { js, fire_and_forget: false }
+    }
+
+    /// Enable fire-and-forget mode (skip ack wait for higher throughput).
+    pub fn set_fire_and_forget(&mut self, enabled: bool) {
+        self.fire_and_forget = enabled;
+    }
+
+    /// Internal helper: publish and optionally wait for ack.
+    async fn do_publish(&self, subject: &str, payload: bytes::Bytes) -> Result<()> {
+        let publish_ack = self.js
+            .publish(subject.to_string(), payload)
+            .await
+            .with_context(|| format!("Failed to publish to {subject}"))?;
+
+        if !self.fire_and_forget {
+            publish_ack
+                .await
+                .with_context(|| format!("Publish ack failed for {subject}"))?;
+        }
+        Ok(())
     }
 
     /// Publish a tick to `Q.{epoch}.QONDUIT.TICK`.
     pub async fn publish_tick(&self, epoch: u16, tick: &TickData) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.TICK");
         let payload = serde_json::to_vec(tick).context("Failed to serialize TickData")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published tick epoch={epoch}, tick={}", tick.tick);
         Ok(())
     }
@@ -71,12 +90,7 @@ impl NatsPublisher {
     pub async fn publish_tx(&self, epoch: u16, tx: &Transaction) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.TX");
         let payload = serde_json::to_vec(tx).context("Failed to serialize Transaction")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published tx epoch={epoch} to QONDUIT.TX");
         Ok(())
     }
@@ -85,12 +99,7 @@ impl NatsPublisher {
     pub async fn publish_entity(&self, _epoch: u16, entity: &EntityData) -> Result<()> {
         let subject = format!("Q.{_epoch}.QONDUIT.ENTITY");
         let payload = serde_json::to_vec(entity).context("Failed to serialize EntityData")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published entity to {subject}");
         Ok(())
     }
@@ -100,12 +109,7 @@ impl NatsPublisher {
         let subject = format!("Q.{epoch}.QONDUIT.COMPUTORS");
         let payload =
             serde_json::to_vec(computors).context("Failed to serialize Computors")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published computors epoch={epoch} to {subject}");
         Ok(())
     }
@@ -119,12 +123,7 @@ impl NatsPublisher {
     ) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.CUSTMSG");
         let payload = serde_json::to_vec(msg).context("Failed to serialize CustomMessage")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published custom message epoch={epoch} tick={tick} to {subject}");
         Ok(())
     }
@@ -138,12 +137,7 @@ impl NatsPublisher {
     ) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.ORACLE");
         let payload = serde_json::to_vec(data).context("Failed to serialize oracle data")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published oracle epoch={epoch} tick={tick} to {subject}");
         Ok(())
     }
@@ -152,12 +146,7 @@ impl NatsPublisher {
     pub async fn publish_asset(&self, epoch: u16, asset: &AssetRecord) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.ASSET");
         let payload = serde_json::to_vec(asset).context("Failed to serialize AssetRecord")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published asset epoch={epoch} to {subject}");
         Ok(())
     }
@@ -166,12 +155,7 @@ impl NatsPublisher {
     pub async fn publish_contract_ipo(&self, epoch: u16, ipo: &ContractIpo) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.CONTRACT");
         let payload = serde_json::to_vec(ipo).context("Failed to serialize ContractIpo")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published contract IPO epoch={epoch} to {subject}");
         Ok(())
     }
@@ -189,12 +173,7 @@ impl NatsPublisher {
             "data_hex": hex::encode(data),
         }))
         .context("Failed to serialize contract function data")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published contract fn epoch={epoch} dejavu={dejavu} to {subject}");
         Ok(())
     }
@@ -203,12 +182,7 @@ impl NatsPublisher {
     pub async fn publish_tick_vote(&self, epoch: u16, vote: &TickVote) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.TICKVOTE");
         let payload = serde_json::to_vec(vote).context("Failed to serialize TickVote")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published tick vote epoch={epoch} tick={}", vote.tick);
         Ok(())
     }
@@ -222,12 +196,7 @@ impl NatsPublisher {
         let subject = format!("Q.{epoch}.QONDUIT.SPECTRUM");
         let payload =
             serde_json::to_vec(entry).context("Failed to serialize spectrum entry")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published spectrum entry epoch={epoch} to {subject}");
         Ok(())
     }
@@ -241,12 +210,7 @@ impl NatsPublisher {
         let subject = format!("Q.{epoch}.QONDUIT.LOG");
         let payload =
             serde_json::to_vec(events).context("Failed to serialize log events")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!(
             count = events.len(),
             epoch = epoch,
@@ -259,12 +223,7 @@ impl NatsPublisher {
     pub async fn publish_quorum_tick(&self, epoch: u16, qt: &QuorumTick) -> Result<()> {
         let subject = format!("Q.{epoch}.QONDUIT.QUORUM");
         let payload = serde_json::to_vec(qt).context("Failed to serialize QuorumTick")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!(
             "Published quorum tick epoch={epoch} tick={} votes={}",
             qt.tick, qt.vote_count
@@ -278,12 +237,7 @@ impl NatsPublisher {
         let subject = "Q.0.QONDUIT.LOGDIGEST".to_string();
         let payload =
             serde_json::to_vec(digest).context("Failed to serialize LogStateDigest")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!("Published log state digest to {subject}");
         Ok(())
     }
@@ -297,12 +251,7 @@ impl NatsPublisher {
         let subject = format!("Q.{epoch}.QONDUIT.ORACLE");
         let payload =
             serde_json::to_vec(oracle).context("Failed to serialize OracleDataResponse")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!(
             "Published oracle data epoch={epoch} resType={}",
             oracle.res_type
@@ -319,12 +268,7 @@ impl NatsPublisher {
         let subject = format!("Q.{epoch}.QONDUIT.MINING");
         let payload =
             serde_json::to_vec(task).context("Failed to serialize CustomMiningTask")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!(
             "Published custom mining task epoch={epoch} job_id={}",
             task.job_id
@@ -341,12 +285,7 @@ impl NatsPublisher {
         let subject = format!("Q.{epoch}.QONDUIT.MINING");
         let payload = serde_json::to_vec(solution)
             .context("Failed to serialize CustomMiningSolution")?;
-        self.js
-            .publish(subject.clone(), payload.into())
-            .await
-            .with_context(|| format!("Failed to publish to {subject}"))?
-            .await
-            .with_context(|| format!("Publish ack failed for {subject}"))?;
+        self.do_publish(&subject, payload.into()).await?;
         debug!(
             "Published custom mining solution epoch={epoch} job_id={}",
             solution.job_id

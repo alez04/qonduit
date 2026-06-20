@@ -50,16 +50,11 @@ impl Indexer {
         let tick: TickData =
             serde_json::from_slice(payload).context("Failed to deserialize TickData")?;
 
-        self.storage.put_tick(tick.tick, payload)?;
+        // Batch write: tick data + meta update in a single disk write
+        let mut batch = self.storage.create_batch();
+        self.storage.batch_put_tick(&mut batch, tick.tick, tick.epoch, payload);
 
-        // Update current tick if newer
-        if let Ok(current) = self.storage.get_current_tick() {
-            if current.is_none_or(|c| tick.tick > c) {
-                self.storage.set_current_tick(tick.tick)?;
-            }
-        }
-
-        // Detect epoch transition
+        // Detect epoch transition before updating pipeline state
         let previous_epoch = self.pipeline.indexed_epoch.load(std::sync::atomic::Ordering::Relaxed);
         if previous_epoch > 0 && tick.epoch != previous_epoch {
             tracing::warn!(
@@ -71,7 +66,6 @@ impl Indexer {
                 tick.epoch, tick.tick
             );
 
-            // Trigger cold tier export for the completed epoch if we have tick data
             let previous_tick = self.pipeline.indexed_tick.load(std::sync::atomic::Ordering::Relaxed);
             if previous_tick > 0 {
                 let tick_range = (0, previous_tick);
@@ -97,8 +91,7 @@ impl Indexer {
             }
         }
 
-        // Always update epoch
-        self.storage.set_current_epoch(tick.epoch)?;
+        self.storage.batch_write(batch)?;
 
         // Update pipeline state
         self.pipeline.indexed_tick.store(tick.tick, std::sync::atomic::Ordering::Relaxed);
@@ -119,17 +112,13 @@ impl Indexer {
         let tx: Transaction = match serde_json::from_slice(payload) {
             Ok(tx) => tx,
             Err(e) => {
-                // Old NATS messages may use a different struct layout.
-                // Log first 200 chars of payload for diagnosis, then skip.
                 let preview = String::from_utf8_lossy(&payload[..payload.len().min(200)]);
                 tracing::warn!("Transaction deserialization failed: {e} — payload preview: {preview}");
                 anyhow::bail!("Transaction deserialization failed: {e}");
             }
         };
 
-        // Decode the transaction hash (base-26 identity string, 60 chars)
         let hash_bytes = qonduit_core::decode_base26(&tx.hash).unwrap_or_else(|| {
-            // Fallback: try hex decode
             hex::decode(&tx.hash)
                 .ok()
                 .filter(|b| b.len() == 32)
@@ -141,50 +130,50 @@ impl Indexer {
                 .unwrap_or([0u8; 32])
         });
 
-        // Store the transaction payload keyed by hash
-        self.storage.put_tx(&hash_bytes, payload)?;
+        // Decode entity keys
+        let source = qonduit_core::decode_base26(&tx.source_identity).or_else(|| {
+            hex::decode(&tx.source_hex)
+                .ok()
+                .filter(|b| b.len() == 32)
+                .map(|b| {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    arr
+                })
+        });
+        let destination = qonduit_core::decode_base26(&tx.destination_identity).or_else(|| {
+            hex::decode(&tx.destination_hex)
+                .ok()
+                .filter(|b| b.len() == 32)
+                .map(|b| {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    arr
+                })
+        });
 
-        // Index by tick using a sequential counter to avoid collisions.
-        // When the tick changes, reset the counter.
+        // Compute sequential tx index within the tick
         let current = self.tx_last_tick.load(Ordering::Relaxed);
         if tx.tick != current {
             self.tx_last_tick.store(tx.tick, Ordering::Relaxed);
             self.tx_counter.store(0, Ordering::Relaxed);
         }
         let tx_index = self.tx_counter.fetch_add(1, Ordering::Relaxed);
-        self.storage.put_tx_for_tick(tx.tick, tx_index, &hash_bytes)?;
 
-        // Index by source entity
-        if let Some(source_key) = qonduit_core::decode_base26(&tx.source_identity) {
-            self.storage
-                .put_tx_for_entity(&source_key, tx.tick, tx_index, &hash_bytes)?;
-        } else if let Some(src) = hex::decode(&tx.source_hex)
-            .ok()
-            .filter(|b| b.len() == 32)
-        {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&src);
-            self.storage
-                .put_tx_for_entity(&key, tx.tick, tx_index, &hash_bytes)?;
-        }
-
-        // Index by destination entity
-        if let Some(dest_key) = qonduit_core::decode_base26(&tx.destination_identity) {
-            self.storage
-                .put_tx_for_entity(&dest_key, tx.tick, tx_index, &hash_bytes)?;
-        } else if let Some(dst) = hex::decode(&tx.destination_hex)
-            .ok()
-            .filter(|b| b.len() == 32)
-        {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&dst);
-            self.storage
-                .put_tx_for_entity(&key, tx.tick, tx_index, &hash_bytes)?;
-        }
+        // Single batch write: payload + tick index + entity indexes
+        let mut batch = self.storage.create_batch();
+        self.storage.batch_put_tx(
+            &mut batch,
+            &hash_bytes,
+            payload,
+            tx.tick,
+            tx_index,
+            source.as_ref(),
+            destination.as_ref(),
+        );
+        self.storage.batch_write(batch)?;
 
         debug!(tick = tx.tick, hash = %tx.hash, "Indexed transaction");
-
-        // Update pipeline state
         self.pipeline.txs_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         Ok(())

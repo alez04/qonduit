@@ -320,13 +320,13 @@ impl Consumer {
                 }
             };
 
+            // Process messages sequentially. The main throughput gains come from
+            // WriteBatch (RocksDB) and fire-and-forget (NATS publish) optimizations.
             while let Some(msg) = messages.next().await {
                 match msg {
                     Ok(msg) => {
                         let payload = msg.payload.to_vec();
                         if let Err(e) = handler(payload, indexer.clone()).await {
-                            // ACK permanent failures (deserialization errors will never
-                            // succeed on retry) to avoid redelivery spam.
                             warn!("Handler error on {stream_name} (acking): {e}");
                             let _ = msg.ack().await;
                         } else {

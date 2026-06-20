@@ -580,7 +580,8 @@ impl BackfillWorker {
         epoch: u16,
     ) -> Result<()> {
         let js = async_nats::jetstream::new(self.nats.clone());
-        let publisher = NatsPublisher::from_context(js);
+        let mut publisher = NatsPublisher::from_context(js);
+        publisher.set_fire_and_forget(true); // max throughput during backfill
 
         match msg_type {
             8 => {

@@ -751,4 +751,66 @@ impl WarmStorage {
     pub fn create_batch(&self) -> WriteBatch {
         WriteBatch::default()
     }
+
+    // ------------------------------------------------------------------
+    // Batch-optimized write helpers (used by the indexer for throughput)
+    // ------------------------------------------------------------------
+
+    /// Atomically write a transaction: store payload + tick index + entity indexes.
+    ///
+    /// Combines what were previously 4 separate `put_cf` calls into a single
+    /// `WriteBatch`, dramatically reducing write amplification and WAL overhead.
+    pub fn batch_put_tx(
+        &self,
+        batch: &mut WriteBatch,
+        hash: &[u8; 32],
+        data: &[u8],
+        tick: u32,
+        tx_index: u32,
+        source: Option<&[u8; 32]>,
+        destination: Option<&[u8; 32]>,
+    ) {
+        let cf_tx = self.db.cf_handle(CF_TX).unwrap();
+        batch.put_cf(cf_tx, hash, data);
+
+        let cf_tick = self.db.cf_handle(CF_TX_BY_TICK).unwrap();
+        let mut tick_key = [0u8; 8];
+        tick_key[..4].copy_from_slice(&tick.to_be_bytes());
+        tick_key[4..].copy_from_slice(&tx_index.to_be_bytes());
+        batch.put_cf(cf_tick, tick_key, hash);
+
+        if let Some(src) = source {
+            let cf_entity = self.db.cf_handle(CF_TX_BY_ENTITY).unwrap();
+            let mut key = [0u8; 40];
+            key[..32].copy_from_slice(src);
+            key[32..36].copy_from_slice(&tick.to_be_bytes());
+            key[36..40].copy_from_slice(&tx_index.to_be_bytes());
+            batch.put_cf(cf_entity, key, hash);
+        }
+
+        if let Some(dst) = destination {
+            let cf_entity = self.db.cf_handle(CF_TX_BY_ENTITY).unwrap();
+            let mut key = [0u8; 40];
+            key[..32].copy_from_slice(dst);
+            key[32..36].copy_from_slice(&tick.to_be_bytes());
+            key[36..40].copy_from_slice(&tx_index.to_be_bytes());
+            batch.put_cf(cf_entity, key, hash);
+        }
+    }
+
+    /// Atomically write a tick: store payload + update meta current_tick + epoch.
+    pub fn batch_put_tick(
+        &self,
+        batch: &mut WriteBatch,
+        tick: u32,
+        epoch: u16,
+        data: &[u8],
+    ) {
+        let cf_tick = self.db.cf_handle(CF_TICK).unwrap();
+        batch.put_cf(cf_tick, tick.to_be_bytes(), data);
+
+        let cf_meta = self.db.cf_handle(CF_META).unwrap();
+        batch.put_cf(cf_meta, b"current_tick", tick.to_be_bytes());
+        batch.put_cf(cf_meta, b"current_epoch", epoch.to_be_bytes());
+    }
 }

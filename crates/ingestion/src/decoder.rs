@@ -83,9 +83,11 @@ impl PacketDecoder {
     /// How many ticks of history to keep in the aggregator.
     const KEEP_TICKS: u32 = 256;
 
-    pub fn new(nats: async_nats::Client) -> Self {
+    pub fn new(nats: async_nats::Client, fire_and_forget: bool) -> Self {
+        let mut publisher = NatsPublisher::new(nats);
+        publisher.set_fire_and_forget(fire_and_forget);
         Self {
-            publisher: NatsPublisher::new(nats),
+            publisher,
             vote_aggregator: Mutex::new(TickVoteAggregator::new()),
             vote_count: Mutex::new(0),
         }

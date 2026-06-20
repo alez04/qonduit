@@ -134,7 +134,7 @@ impl IngestionClient {
 
         Self {
             config,
-            decoder: PacketDecoder::new(nats),
+            decoder: PacketDecoder::new(nats, true), // fire-and-forget for max throughput
             peer_manager,
             pipeline,
             current_epoch: 0,
