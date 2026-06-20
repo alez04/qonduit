@@ -9,10 +9,10 @@
 //! Uses a sliding-window pipeline: keeps PIPELINE_DEPTH requests in-flight
 //! simultaneously and uses a FIFO queue to correctly match responses to requests.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -129,8 +129,8 @@ struct BackfillShared {
     pub start_tick: AtomicU32,
     /// The resolved end tick.
     pub end_tick: AtomicU32,
-    /// Set of ticks that have been processed (for deduplication across workers).
-    processed_ticks: Mutex<HashSet<u32>>,
+    // NOTE: processed_ticks removed — workers already have non-overlapping ranges
+    // (partitioned at line ~295), so no cross-worker deduplication is needed.
 }
 
 impl BackfillShared {
@@ -143,15 +143,7 @@ impl BackfillShared {
             ticks_failed: AtomicU64::new(0),
             start_tick: AtomicU32::new(0),
             end_tick: AtomicU32::new(0),
-            processed_ticks: Mutex::new(HashSet::new()),
         }
-    }
-
-    /// Check and mark a tick as being processed. Returns true if this tick
-    /// should be processed (not already claimed by another worker).
-    fn claim_tick(&self, tick: u32) -> bool {
-        let mut set = self.processed_ticks.lock().unwrap();
-        set.insert(tick) // insert returns true if the value was not already present
     }
 }
 
@@ -516,7 +508,9 @@ impl BackfillWorker {
     async fn connect_and_process(&mut self, current_tick: &mut u32) -> Result<()> {
         let mut attempts = 0;
         while attempts < MAX_PEERS_PER_WORKER {
-            let addr = match self.peer_manager.best_peer().await {
+            // Prefer BOB peers (port 21842) for backfill — they store full history.
+            // Falls back to best_peer() if no BOB peers are available.
+            let addr = match self.peer_manager.best_bob_peer().await {
                 Some(a) => a,
                 None => anyhow::bail!("No peers available"),
             };
@@ -626,7 +620,15 @@ impl BackfillWorker {
                                 skip_size = FAILURE_SKIP_INITIAL;
 
                                 // Decode and publish tick data
-                                if let Err(e) = self.decode_and_publish(8, &payload, epoch).await {
+                                // Extract epoch from tick payload (offset 2..4) instead of
+                                // using the connection-time epoch, which is wrong for
+                                // historical ticks that may span epoch boundaries.
+                                let tick_epoch = if payload.len() >= 4 {
+                                    u16::from_le_bytes([payload[2], payload[3]])
+                                } else {
+                                    epoch
+                                };
+                                if let Err(e) = self.decode_and_publish(8, &payload, tick_epoch).await {
                                     debug!("Worker {}: tick data decode error for {resp_tick}: {e:#}", self.worker_id);
                                 } else {
                                     self.shared.ticks_discovered.fetch_add(1, Ordering::Relaxed);
@@ -678,7 +680,19 @@ impl BackfillWorker {
                         }
                         24 => {
                             // BROADCAST_TRANSACTION: a transaction response
-                            if let Err(e) = self.decode_and_publish(24, &payload, epoch).await {
+                            // For transactions, extract tick from payload (offset 72..76)
+                            // and use the connection-time epoch as a best-effort fallback.
+                            let tx_epoch = if payload.len() >= 76 {
+                                let tx_tick = u32::from_le_bytes([payload[72], payload[73], payload[74], payload[75]]);
+                                // If we could look up the epoch from the tick, we would.
+                                // For now, the connection-time epoch is the best we have.
+                                // The processor will index it under whatever epoch it gets.
+                                let _ = tx_tick;
+                                epoch
+                            } else {
+                                epoch
+                            };
+                            if let Err(e) = self.decode_and_publish(24, &payload, tx_epoch).await {
                                 debug!("Worker {}: tx decode error: {e:#}", self.worker_id);
                             } else {
                                 self.shared.txs_discovered.fetch_add(1, Ordering::Relaxed);
@@ -737,7 +751,7 @@ impl BackfillWorker {
     /// whenever slots are available. Applies the consecutive-failure skip
     /// logic when the node doesn't have data for the requested range.
     fn fill_pipeline<'a>(
-        shared: &'a BackfillShared,
+        _shared: &'a BackfillShared,
         worker_id: usize,
         worker_end: u32,
         stream: &'a mut TcpStream,
@@ -758,12 +772,6 @@ impl BackfillWorker {
                     *next_tick_to_request = skip_to;
                     *consecutive_failures = 0;
                     *skip_size = (*skip_size * 2).min(FAILURE_SKIP_MAX);
-                    continue;
-                }
-
-                // Check if another worker already claimed this tick
-                if !shared.claim_tick(*next_tick_to_request) {
-                    *next_tick_to_request += 1;
                     continue;
                 }
 

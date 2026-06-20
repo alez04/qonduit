@@ -401,7 +401,13 @@ impl IngestionClient {
                                 .decode_and_publish(msg_type, dejavu, &payload, self.current_epoch)
                                 .await
                             {
-                                warn!("Decode/publish error for type {msg_type}: {e:#}");
+                                // Downgrade type 69 (CustomMiningSolution) errors to debug —
+                                // frequent size mismatches cause log flooding.
+                                if msg_type == 69 {
+                                    debug!("Decode/publish error for type {msg_type}: {e:#}");
+                                } else {
+                                    warn!("Decode/publish error for type {msg_type}: {e:#}");
+                                }
                                 PACKETS_DECODE_ERRORS.inc();
                             } else {
                                 published_since_last_stats += 1;
@@ -432,16 +438,11 @@ impl IngestionClient {
                     };
 
                     for identity in &batch {
-                        match protocol::request_entity(stream, identity).await {
-                            Ok(data) => {
-                                // Publish the entity response to NATS
-                                if let Err(e) = self.decoder.decode_and_publish(32, 0, &data, self.current_epoch).await {
-                                    debug!("Entity publish error: {e:#}");
-                                }
-                            }
-                            Err(e) => {
-                                debug!("Entity request failed for identity: {e:#}");
-                            }
+                        // Fire-and-forget: send the request without waiting for response.
+                        // The type 32 response will arrive later and be handled by the
+                        // read_loop's inline handler (msg_type == 32 branch).
+                        if let Err(e) = protocol::send_entity_request(stream, identity).await {
+                            debug!("Entity request send failed for identity: {e:#}");
                         }
                     }
                 }

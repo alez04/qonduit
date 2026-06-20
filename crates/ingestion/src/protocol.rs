@@ -206,6 +206,16 @@ pub async fn request_entity(stream: &mut TcpStream, identity: &[u8; 32]) -> Resu
     }
 }
 
+/// Send an entity request (type 31) without waiting for a response (fire-and-forget).
+///
+/// The response (type 32) will arrive later and be handled by the read loop.
+/// This avoids blocking the entire read loop for 10+ seconds per entity request.
+pub async fn send_entity_request(stream: &mut TcpStream, identity: &[u8; 32]) -> Result<()> {
+    let dejavu = rand::random::<u32>().max(1);
+    send_raw(stream, 31, identity, dejavu).await?;
+    Ok(())
+}
+
 /// Send a tick data request (type 16) without waiting for a response.
 ///
 /// Returns the dejavu correlation ID so the caller can match the response.

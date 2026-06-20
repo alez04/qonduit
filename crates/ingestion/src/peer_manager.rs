@@ -16,6 +16,9 @@ use tracing::{debug, info, warn};
 /// Default Qubic protocol port.
 const QUBIC_PORT: u16 = 21841;
 
+/// Bob node P2P port.
+const BOB_PORT: u16 = 21842;
+
 /// Timeout for the bootstrap HTTP request.
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -84,13 +87,13 @@ impl Peer {
 
 /// JSON response from `api.qubic.global/random-peers`.
 ///
-/// Bob peers (port 21842) are ignored — they never broadcast tick data.
+/// Both lite and BOB peers are collected. BOB peers (port 21842) store
+/// full historical data and are preferred for backfill operations.
 #[derive(Debug, serde::Deserialize)]
 struct RandomPeersResponse {
     #[serde(default, rename = "litePeers")]
     lite_peers: Vec<String>,
     #[serde(default, rename = "bobPeers")]
-    #[allow(dead_code)]
     bob_peers: Vec<String>,
 }
 
@@ -109,7 +112,7 @@ impl PeerManager {
         Self {
             peers: Arc::new(RwLock::new(peers)),
             bootstrap_urls: vec![
-                "https://api.qubic.global/random-peers?service=bobNode&litePeers=8&bobPeers=0"
+                "https://api.qubic.global/random-peers?service=bobNode&litePeers=8&bobPeers=8"
                     .to_string(),
             ],
         }
@@ -148,14 +151,25 @@ impl PeerManager {
         let mut added = 0usize;
         let mut peers = self.peers.write().await;
 
-        // Only add lite peers (port 21841). Bob peers (port 21842) never
-        // broadcast tick data, so they're useless for live ingestion.
+        // Add lite peers (port 21841) — consensus nodes for live data.
         for ip_str in &body.lite_peers {
             if let Some(addr) = parse_peer_addr(ip_str, QUBIC_PORT) {
                 if !peers.iter().any(|p| p.addr == addr) {
                     peers.push(Peer::new(addr));
                     added += 1;
                     debug!("Added lite peer {addr}");
+                }
+            }
+        }
+
+        // Add BOB peers (port 21842) — indexer nodes with full historical data.
+        // BOB peers are critical for backfill operations.
+        for ip_str in &body.bob_peers {
+            if let Some(addr) = parse_peer_addr(ip_str, BOB_PORT) {
+                if !peers.iter().any(|p| p.addr == addr) {
+                    peers.push(Peer::new(addr));
+                    added += 1;
+                    debug!("Added BOB peer {addr}");
                 }
             }
         }
@@ -298,6 +312,42 @@ impl PeerManager {
     pub async fn random_peer(&self) -> Option<SocketAddr> {
         let peers = self.peers.read().await;
         peers.choose(&mut rand::thread_rng()).map(|p| p.addr)
+    }
+
+    /// Get the best BOB peer (port 21842) for backfill operations.
+    ///
+    /// BOB peers store full historical data and are preferred for backfill.
+    /// Falls back to the general `best_peer()` if no BOB peers are available.
+    pub async fn best_bob_peer(&self) -> Option<SocketAddr> {
+        let peers = self.peers.read().await;
+
+        let mut bob_candidates: Vec<&Peer> = peers
+            .iter()
+            .filter(|p| p.addr.port() == BOB_PORT && p.score() >= 0.2)
+            .collect();
+
+        if bob_candidates.is_empty() {
+            // No BOB peers available, fall back to any peer
+            drop(peers);
+            return self.best_peer().await;
+        }
+
+        // Sort: highest score first, then least recently seen first
+        let now = Instant::now();
+        bob_candidates.sort_by(|a, b| {
+            b.score()
+                .partial_cmp(&a.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    let a_seen = a.last_seen.map(|t| now.duration_since(t).as_secs()).unwrap_or(u64::MAX);
+                    let b_seen = b.last_seen.map(|t| now.duration_since(t).as_secs()).unwrap_or(u64::MAX);
+                    b_seen.cmp(&a_seen)
+                })
+        });
+
+        let top_n = bob_candidates.len().min(3);
+        let pick = rand::random::<usize>() % top_n;
+        Some(bob_candidates[pick].addr)
     }
 
     /// Get all known peers.
