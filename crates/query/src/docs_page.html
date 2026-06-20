@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qonduit API Documentation</title>
+<style>
+  :root {
+    --bg: #0f0f14;
+    --bg-card: #1a1a24;
+    --bg-code: #14141e;
+    --border: #2a2a3a;
+    --text: #e0e0e8;
+    --text-dim: #8888a0;
+    --accent: #7c3aed;
+    --accent-light: #a78bfa;
+    --accent-bg: rgba(124,58,237,0.08);
+    --green: #22c55e;
+    --yellow: #eab308;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --orange: #f97316;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0;
+    width: 280px;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    z-index: 100;
+  }
+  .sidebar-logo {
+    padding: 0 20px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .sidebar-logo h2 {
+    font-size: 1.3rem;
+    color: var(--accent-light);
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  .sidebar-logo .subtitle {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .sidebar nav a {
+    display: block;
+    padding: 6px 20px;
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.88rem;
+    transition: all 0.15s;
+    border-left: 3px solid transparent;
+  }
+  .sidebar nav a:hover {
+    color: var(--text);
+    background: var(--accent-bg);
+    border-left-color: var(--accent);
+  }
+  .sidebar nav a.active {
+    color: var(--accent-light);
+    background: var(--accent-bg);
+    border-left-color: var(--accent);
+  }
+  .sidebar nav .section-label {
+    padding: 12px 20px 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+  }
+
+  /* Main content */
+  .content {
+    margin-left: 280px;
+    flex: 1;
+    max-width: 960px;
+    padding: 40px 48px 80px;
+  }
+
+  h1 { font-size: 2rem; font-weight: 800; margin-bottom: 8px; color: #fff; }
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 48px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    color: #fff;
+  }
+  h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 28px 0 12px;
+    color: var(--accent-light);
+  }
+  h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 20px 0 8px;
+    color: var(--text);
+  }
+  p { margin-bottom: 12px; }
+  a { color: var(--accent-light); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .intro { color: var(--text-dim); font-size: 1.05rem; margin-bottom: 24px; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+  }
+  .badge-get { background: #16a34a22; color: var(--green); border: 1px solid #16a34a44; }
+  .badge-post { background: #3b82f622; color: var(--blue); border: 1px solid #3b82f644; }
+  .badge-ws { background: #f9731622; color: var(--orange); border: 1px solid #f9731644; }
+  .badge-live { background: #22c55e22; color: var(--green); }
+  .badge-catching { background: #eab30822; color: var(--yellow); }
+  .badge-disconnected { background: #ef444422; color: var(--red); }
+
+  .endpoint-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 16px 0;
+  }
+  .endpoint-card .method {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .endpoint-card .path {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.95rem;
+    color: var(--text);
+  }
+  .endpoint-card .desc {
+    color: var(--text-dim);
+    margin: 8px 0 0;
+    font-size: 0.92rem;
+  }
+  .endpoint-card .params {
+    margin-top: 12px;
+  }
+  .endpoint-card .params td {
+    padding: 4px 12px 4px 0;
+    font-size: 0.88rem;
+    vertical-align: top;
+  }
+  .endpoint-card .params .param-name {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--accent-light);
+    font-weight: 600;
+  }
+  .endpoint-card .params .param-type {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+  }
+
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    margin: 12px 0;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    color: #c8c8d8;
+  }
+  code {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.88em;
+    background: var(--bg-code);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--accent-light);
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 0.9rem;
+  }
+  th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    font-weight: 600;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin: 0 2px;
+  }
+  .tag-system { background: #3b82f622; color: var(--blue); }
+  .tag-ticks { background: #7c3aed22; color: var(--accent-light); }
+  .tag-transactions { background: #f9731622; color: var(--orange); }
+  .tag-entities { background: #22c55e22; color: var(--green); }
+  .tag-computors { background: #eab30822; color: var(--yellow); }
+  .tag-assets { background: #ec489922; color: #ec4899; }
+  .tag-contracts { background: #06b6d422; color: #06b6d4; }
+  .tag-search { background: #8b5cf622; color: #a78bfa; }
+  .tag-metrics { background: #64748b22; color: #94a3b8; }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .status-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+  }
+  .status-card h4 { margin: 0 0 6px; font-size: 0.95rem; }
+  .status-card p { margin: 0; font-size: 0.85rem; color: var(--text-dim); }
+
+  .note {
+    background: var(--accent-bg);
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 16px 0;
+    font-size: 0.9rem;
+  }
+  .note strong { color: var(--accent-light); }
+
+  .method-table td:first-child {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    color: var(--accent-light);
+    white-space: nowrap;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .content { margin-left: 0; padding: 24px 20px; }
+    .status-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h2>Qonduit</h2>
+    <div class="subtitle">API Documentation</div>
+  </div>
+  <nav>
+    <div class="section-label">Getting Started</div>
+    <a href="#overview">Overview</a>
+    <a href="#base-url">Base URL</a>
+    <a href="#quick-start">Quick Start</a>
+
+    <div class="section-label">REST API</div>
+    <a href="#rest-health">GET /health</a>
+    <a href="#rest-system-info">GET /system-info</a>
+    <a href="#rest-current-tick">GET /v1/tick</a>
+    <a href="#rest-tick">GET /v1/tick/{tick}</a>
+    <a href="#rest-tick-tx">GET /v1/tick/{tick}/tx</a>
+    <a href="#rest-tx">GET /v1/tx/{hash}</a>
+    <a href="#rest-entity">GET /v1/entity/{id}</a>
+    <a href="#rest-entity-tx">GET /v1/entity/{id}/transactions</a>
+    <a href="#rest-spectrum">GET /v1/spectrum/{id}</a>
+    <a href="#rest-computors">GET /v1/computors</a>
+    <a href="#rest-computors-epoch">GET /v1/computors/{epoch}</a>
+    <a href="#rest-issued-assets">GET /v1/issued-assets</a>
+    <a href="#rest-asset">GET /v1/assets/{index}</a>
+    <a href="#rest-owned-assets">GET /v1/owned-assets/{id}</a>
+    <a href="#rest-possessed-assets">GET /v1/possessed-assets/{id}</a>
+    <a href="#rest-contract-ipo">GET /v1/contract-ipo/{index}</a>
+    <a href="#rest-active-ipos">GET /v1/active-ipos</a>
+    <a href="#rest-search">GET /v1/search/{query}</a>
+    <a href="#rest-metrics">GET /metrics</a>
+
+    <div class="section-label">JSON-RPC 2.0</div>
+    <a href="#rpc-overview">Overview</a>
+    <a href="#rpc-bob">Bob-Compatible</a>
+    <a href="#rpc-qonduit">Qonduit-Native</a>
+    <a href="#rpc-examples">Examples</a>
+
+    <div class="section-label">WebSocket</div>
+    <a href="#ws-overview">Overview</a>
+    <a href="#ws-topics">Topics</a>
+    <a href="#ws-client">Client Example</a>
+
+    <div class="section-label">Reference</div>
+    <a href="#errors">Error Codes</a>
+    <a href="#pipeline-status">Pipeline Status</a>
+    <a href="#data-types">Data Types</a>
+    <a href="#openapi">OpenAPI / Scalar</a>
+  </nav>
+</aside>
+
+<!-- Main Content -->
+<main class="content">
+
+<!-- ========== OVERVIEW ========== -->
+<h1 id="overview">Qonduit API Documentation</h1>
+<p class="intro">Qonduit is a Qubic blockchain indexer and RPC server. It provides three API surfaces: a REST API for direct queries, a JSON-RPC 2.0 interface for Bob-compatible and extended methods, and WebSocket subscriptions for real-time streaming.</p>
+
+<div class="note">
+  <strong>Interactive API Reference:</strong> For a machine-readable OpenAPI spec and interactive try-it-out UI, see the <a href="/openapi.json">OpenAPI JSON</a> or the <a href="/scalar">Scalar API Reference</a>.
+</div>
+
+<h2 id="base-url">Base URL</h2>
+<pre><code>http://your-host:8080</code></pre>
+<p>All endpoints are served on a single port (default <code>8080</code>). CORS is enabled for all origins.</p>
+
+<h2 id="quick-start">Quick Start</h2>
+<p>Check the server health and get the latest tick:</p>
+<pre><code># Health check
+curl http://localhost:8080/health
+
+# Get latest tick data
+curl http://localhost:8080/v1/tick
+
+# JSON-RPC: get current tick
+curl -X POST http://localhost:8080/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"getCurrentTickInfo","params":[],"id":1}'</code></pre>
+
+
+<!-- ========== REST API ========== -->
+<h1 id="rest-overview">REST API</h1>
+<p>18 endpoints for querying indexed blockchain data. All return <code>application/json</code> unless otherwise noted.</p>
+
+<!-- GET /health -->
+<h3 id="rest-health"><span class="badge badge-get">GET</span> /health</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-system">system</span></div>
+  <p class="desc">Health check. Returns server status, version, and uptime.</p>
+</div>
+<pre><code>{
+  "status": "ok",
+  "version": "0.1.0",
+  "uptime_seconds": 3600
+}</code></pre>
+
+<!-- GET /system-info -->
+<h3 id="rest-system-info"><span class="badge badge-get">GET</span> /system-info</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-system">system</span></div>
+  <p class="desc">Full pipeline and system status. Includes ingestion connection state, tick/epoch progress, and indexing counters.</p>
+</div>
+<pre><code>{
+  "pipeline_status": "live",
+  "ingestion_connected": true,
+  "node_tick": 14285714,
+  "node_epoch": 142,
+  "indexed_tick": 14285710,
+  "indexed_epoch": 142,
+  "ticks_behind": 4,
+  "ticks_indexed": 589012,
+  "txs_indexed": 2341567,
+  "entities_indexed": 89234,
+  "tick_lag": 0,
+  "tx_lag": 12,
+  "entity_lag": 3,
+  "uptime_seconds": 7200,
+  "version": "0.1.0"
+}</code></pre>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>pipeline_status</code></td><td>string</td><td>Derived status: <code>live</code>, <code>catching_up</code>, <code>disconnected</code>, or <code>query_only</code></td></tr>
+  <tr><td><code>ingestion_connected</code></td><td>bool</td><td>Whether the ingestion client is connected to a Qubic node</td></tr>
+  <tr><td><code>node_tick</code></td><td>u32</td><td>Latest tick reported by the Qubic node</td></tr>
+  <tr><td><code>node_epoch</code></td><td>u16</td><td>Latest epoch reported by the Qubic node</td></tr>
+  <tr><td><code>indexed_tick</code></td><td>u32</td><td>Latest tick indexed into RocksDB</td></tr>
+  <tr><td><code>indexed_epoch</code></td><td>u16</td><td>Latest epoch indexed into RocksDB</td></tr>
+  <tr><td><code>ticks_behind</code></td><td>i64</td><td>Number of ticks behind the node (0 = caught up)</td></tr>
+  <tr><td><code>ticks_indexed</code></td><td>u64</td><td>Total ticks indexed since startup</td></tr>
+  <tr><td><code>txs_indexed</code></td><td>u64</td><td>Total transactions indexed since startup</td></tr>
+  <tr><td><code>entities_indexed</code></td><td>u64</td><td>Total entities indexed since startup</td></tr>
+  <tr><td><code>tick_lag</code></td><td>u64</td><td>Estimated unprocessed tick messages in NATS stream</td></tr>
+  <tr><td><code>tx_lag</code></td><td>u64</td><td>Estimated unprocessed transaction messages in NATS stream</td></tr>
+  <tr><td><code>entity_lag</code></td><td>u64</td><td>Estimated unprocessed entity messages in NATS stream</td></tr>
+  <tr><td><code>uptime_seconds</code></td><td>u64</td><td>Seconds since the pipeline started</td></tr>
+  <tr><td><code>version</code></td><td>string</td><td>Qonduit server version</td></tr>
+</table>
+
+<!-- GET /v1/tick -->
+<h3 id="rest-current-tick"><span class="badge badge-get">GET</span> /v1/tick</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-ticks">ticks</span></div>
+  <p class="desc">Get the latest (most recent) tick data.</p>
+</div>
+<pre><code>{
+  "computor_index": 0,
+  "epoch": 142,
+  "tick": 14285714,
+  "timestamp": 1718851234567,
+  "time_lock": "0000000000000000000000000000000000000000000000000000000000000000"
+}</code></pre>
+
+<!-- GET /v1/tick/{tick} -->
+<h3 id="rest-tick"><span class="badge badge-get">GET</span> /v1/tick/{tick}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-ticks">ticks</span></div>
+  <p class="desc">Get tick data by block number.</p>
+  <table class="params">
+    <tr><td class="param-name">tick</td><td class="param-type">u32 (path)</td><td>The tick/block number</td></tr>
+  </table>
+</div>
+<pre><code># Request
+curl http://localhost:8080/v1/tick/14285714
+
+# Response
+{
+  "computor_index": 0,
+  "epoch": 142,
+  "tick": 14285714,
+  "timestamp": 1718851234567,
+  "time_lock": "0000000000000000000000000000000000000000000000000000000000000000"
+}</code></pre>
+
+<!-- GET /v1/tick/{tick}/tx -->
+<h3 id="rest-tick-tx"><span class="badge badge-get">GET</span> /v1/tick/{tick}/tx</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-transactions">transactions</span></div>
+  <p class="desc">Get all transactions included in a specific tick.</p>
+  <table class="params">
+    <tr><td class="param-name">tick</td><td class="param-type">u32 (path)</td><td>The tick/block number</td></tr>
+  </table>
+</div>
+<pre><code>[
+  {
+    "hash": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "source_hex": "aabbcc...",
+    "source_identity": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "destination_hex": "112233...",
+    "destination_identity": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "amount": 1000000,
+    "tick": 14285714,
+    "input_type": 0,
+    "input_size": 0,
+    "input_hex": "",
+    "input_type_name": "simple_transfer",
+    "signature_hex": "deadbeef..."
+  }
+]</code></pre>
+
+<!-- GET /v1/tx/{hash} -->
+<h3 id="rest-tx"><span class="badge badge-get">GET</span> /v1/tx/{hash}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-transactions">transactions</span></div>
+  <p class="desc">Get a single transaction by its 64-character hex hash.</p>
+  <table class="params">
+    <tr><td class="param-name">hash</td><td class="param-type">string (path)</td><td>64-character lowercase hex transaction hash</td></tr>
+  </table>
+</div>
+<pre><code># Request
+curl http://localhost:8080/v1/tx/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+
+# Response
+{
+  "hash": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+  "source_hex": "aabbcc...",
+  "source_identity": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "destination_hex": "112233...",
+  "destination_identity": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "amount": 1000000,
+  "tick": 14285714,
+  "input_type": 0,
+  "input_size": 0,
+  "input_hex": "",
+  "input_type_name": "simple_transfer",
+  "signature_hex": "deadbeef..."
+}</code></pre>
+
+<!-- GET /v1/entity/{id} -->
+<h3 id="rest-entity"><span class="badge badge-get">GET</span> /v1/entity/{id}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-entities">entities</span></div>
+  <p class="desc">Get entity (account) data by base26-encoded identity.</p>
+  <table class="params">
+    <tr><td class="param-name">id</td><td class="param-type">string (path)</td><td>60-character base26-encoded identity</td></tr>
+  </table>
+</div>
+<pre><code>{
+  "identity": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "incoming": 5000000,
+  "outgoing": 2500000,
+  "number_of_incoming_transfers": 12,
+  "number_of_outgoing_transfers": 8,
+  "latest_incoming_transfer_tick": 14285710,
+  "latest_outgoing_transfer_tick": 14285700
+}</code></pre>
+
+<!-- GET /v1/entity/{id}/transactions -->
+<h3 id="rest-entity-tx"><span class="badge badge-get">GET</span> /v1/entity/{id}/transactions</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-entities">entities</span></div>
+  <p class="desc">Get list of transaction hashes involving an entity.</p>
+  <table class="params">
+    <tr><td class="param-name">id</td><td class="param-type">string (path)</td><td>60-character base26-encoded identity</td></tr>
+  </table>
+</div>
+<pre><code>[
+  "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+  "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+]</code></pre>
+
+<!-- GET /v1/spectrum/{id} -->
+<h3 id="rest-spectrum"><span class="badge badge-get">GET</span> /v1/spectrum/{id}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-entities">entities</span></div>
+  <p class="desc">Get the spectrum (balance sheet) entry for an entity. Includes balance, transfer counts, and asset indices.</p>
+  <table class="params">
+    <tr><td class="param-name">id</td><td class="param-type">string (path)</td><td>60-character base26-encoded identity</td></tr>
+  </table>
+</div>
+<pre><code>{
+  "identity": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "incoming_amount": 5000000,
+  "outgoing_amount": 2500000,
+  "balance": 2500000,
+  "number_of_incoming_transfers": 12,
+  "number_of_outgoing_transfers": 8,
+  "latest_incoming_transfer_tick": 14285710,
+  "latest_outgoing_transfer_tick": 14285700,
+  "asset_issued": 0,
+  "asset_owned": 0
+}</code></pre>
+
+<!-- GET /v1/computors -->
+<h3 id="rest-computors"><span class="badge badge-get">GET</span> /v1/computors</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-computors">computors</span></div>
+  <p class="desc">Get the latest computor set for the current epoch.</p>
+</div>
+<pre><code>{
+  "epoch": 142,
+  "public_keys": ["aabbcc...", "112233...", "..."],
+  "public_key_identities": ["AAAA...", "BBBB...", "..."]
+}</code></pre>
+
+<!-- GET /v1/computors/{epoch} -->
+<h3 id="rest-computors-epoch"><span class="badge badge-get">GET</span> /v1/computors/{epoch}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-computors">computors</span></div>
+  <p class="desc">Get computor list for a specific epoch number.</p>
+  <table class="params">
+    <tr><td class="param-name">epoch</td><td class="param-type">u16 (path)</td><td>Epoch number (e.g., 142)</td></tr>
+  </table>
+</div>
+
+<!-- GET /v1/issued-assets -->
+<h3 id="rest-issued-assets"><span class="badge badge-get">GET</span> /v1/issued-assets</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-assets">assets</span></div>
+  <p class="desc">List all issued assets (up to 1000).</p>
+</div>
+<pre><code>[
+  {
+    "asset_type": "Issuance",
+    "issuance_index": 0,
+    "issuance_amount": 1000000,
+    "number_of_units": 100,
+    "value_per_unit": 10000,
+    "name": "MyToken",
+    "description": "A test token",
+    "url": "https://example.com",
+    "issuing_entity": "AAAA...",
+    "owning_entity": "BBBB...",
+    "possessing_entity": "CCCC..."
+  }
+]</code></pre>
+
+<!-- GET /v1/assets/{index} -->
+<h3 id="rest-asset"><span class="badge badge-get">GET</span> /v1/assets/{index}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-assets">assets</span></div>
+  <p class="desc">Get a single asset by its issuance index.</p>
+  <table class="params">
+    <tr><td class="param-name">index</td><td class="param-type">u32 (path)</td><td>Asset issuance index</td></tr>
+  </table>
+</div>
+
+<!-- GET /v1/owned-assets/{id} -->
+<h3 id="rest-owned-assets"><span class="badge badge-get">GET</span> /v1/owned-assets/{id}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-assets">assets</span></div>
+  <p class="desc">Get all assets owned by an entity. Uses the entity-to-asset index if available, falls back to a full scan.</p>
+  <table class="params">
+    <tr><td class="param-name">id</td><td class="param-type">string (path)</td><td>60-character base26-encoded identity</td></tr>
+  </table>
+</div>
+
+<!-- GET /v1/possessed-assets/{id} -->
+<h3 id="rest-possessed-assets"><span class="badge badge-get">GET</span> /v1/possessed-assets/{id}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-assets">assets</span></div>
+  <p class="desc">Get all assets possessed (held) by an entity.</p>
+  <table class="params">
+    <tr><td class="param-name">id</td><td class="param-type">string (path)</td><td>60-character base26-encoded identity</td></tr>
+  </table>
+</div>
+
+<!-- GET /v1/contract-ipo/{index} -->
+<h3 id="rest-contract-ipo"><span class="badge badge-get">GET</span> /v1/contract-ipo/{index}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-contracts">contracts</span></div>
+  <p class="desc">Get contract IPO (Initial Public Offering) data including all bids.</p>
+  <table class="params">
+    <tr><td class="param-name">index</td><td class="param-type">u32 (path)</td><td>Contract index</td></tr>
+  </table>
+</div>
+<pre><code>{
+  "contract_index": 42,
+  "bids": [
+    { "identity": "AAAA...", "bid_amount": 5000000 },
+    { "identity": "BBBB...", "bid_amount": 3000000 }
+  ]
+}</code></pre>
+
+<!-- GET /v1/active-ipos -->
+<h3 id="rest-active-ipos"><span class="badge badge-get">GET</span> /v1/active-ipos</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-contracts">contracts</span></div>
+  <p class="desc">List all active contract IPOs (up to 1000).</p>
+</div>
+
+<!-- GET /v1/search/{query} -->
+<h3 id="rest-search"><span class="badge badge-get">GET</span> /v1/search/{query}</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-search">search</span></div>
+  <p class="desc">Search for entities and transactions. The query type is auto-detected:</p>
+  <ul style="color:var(--text-dim);font-size:0.9rem;margin:8px 0 0 20px;">
+    <li><strong>Numeric string</strong> &mdash; searched as a tick number</li>
+    <li><strong>64-char hex string</strong> &mdash; searched as a transaction hash</li>
+    <li><strong>60-char uppercase string</strong> &mdash; exact entity identity lookup</li>
+    <li><strong>4-59 char uppercase string</strong> &mdash; entity identity prefix search</li>
+  </ul>
+  <table class="params" style="margin-top:12px;">
+    <tr><td class="param-name">query</td><td class="param-type">string (path)</td><td>Search query</td></tr>
+  </table>
+</div>
+<pre><code>{
+  "results": [
+    { "type": "tick", "data": { "tick": 14285714, "epoch": 142, "..." : "..." } },
+    { "type": "entity", "data": { "identity": "AAA...", "incoming": 5000000, "..." : "..." } },
+    { "type": "transaction", "data": { "hash": "abcdef...", "amount": 1000000, "..." : "..." } }
+  ]
+}</code></pre>
+
+<!-- GET /metrics -->
+<h3 id="rest-metrics"><span class="badge badge-get">GET</span> /metrics</h3>
+<div class="endpoint-card">
+  <div><span class="tag tag-metrics">metrics</span></div>
+  <p class="desc">Prometheus-compatible metrics endpoint. Returns <code>text/plain</code> format.</p>
+</div>
+<pre><code># HELP rest_requests_total Total REST API requests
+# TYPE rest_requests_total counter
+rest_requests_total 1234
+# HELP rpc_requests_total Total JSON-RPC requests
+# TYPE rpc_requests_total counter
+rpc_requests_total 5678</code></pre>
+
+
+<!-- ========== JSON-RPC 2.0 ========== -->
+<h1 id="rpc-overview">JSON-RPC 2.0</h1>
+<p>Qonduit implements the <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a> specification. The RPC endpoint is available at both <code>/rpc</code> and <code>/json-rpc</code>.</p>
+
+<pre><code>POST http://localhost:8080/rpc
+POST http://localhost:8080/json-rpc
+
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "method": "methodName",
+  "params": ["param1", 42],
+  "id": 1
+}</code></pre>
+
+<h2 id="rpc-bob">Bob-Compatible Methods</h2>
+<p>These methods are compatible with the Bob RPC API, allowing drop-in replacement for existing dApps.</p>
+
+<table class="method-table">
+  <tr><th>Method</th><th>Params</th><th>Description</th></tr>
+  <tr><td><code>getTickInfo</code></td><td>[]</td><td>Returns current tick and epoch</td></tr>
+  <tr><td><code>getCurrentTickInfo</code></td><td>[]</td><td>Returns current epoch and tick</td></tr>
+  <tr><td><code>getEntity</code></td><td>[identity]</td><td>Get entity data by base26 identity</td></tr>
+  <tr><td><code>getBalance</code></td><td>[identity]</td><td>Get Qubic balance for an entity</td></tr>
+  <tr><td><code>getTransactionsForTick</code></td><td>[tick]</td><td>List transactions in a tick (alias: <code>getTickTransactions</code>)</td></tr>
+  <tr><td><code>getTransaction</code></td><td>[hash]</td><td>Get transaction by hex hash</td></tr>
+  <tr><td><code>getBlock</code></td><td>[tick]</td><td>Get block (tick) data by number</td></tr>
+  <tr><td><code>getQubicInfo</code></td><td>[]</td><td>Returns epoch, tick, and version</td></tr>
+  <tr><td><code>getSystemInfo</code></td><td>[]</td><td>Returns currentTick and currentEpoch</td></tr>
+  <tr><td><code>getComputors</code></td><td>[]</td><td>Get latest computor set</td></tr>
+  <tr><td><code>getContractIPO</code></td><td>[index]</td><td>Get contract IPO data by index</td></tr>
+  <tr><td><code>getIssuedAssets</code></td><td>[]</td><td>List all issued assets</td></tr>
+  <tr><td><code>getOwnedAssets</code></td><td>[identity]</td><td>Assets owned by an entity</td></tr>
+  <tr><td><code>getPossessedAssets</code></td><td>[identity]</td><td>Assets possessed by an entity</td></tr>
+  <tr><td><code>getAssetsByOwner</code></td><td>[identity]</td><td>Alias for getOwnedAssets</td></tr>
+  <tr><td><code>getSpectrumStats</code></td><td>[]</td><td>Current tick, epoch, entity count</td></tr>
+  <tr><td><code>getSpectrum</code></td><td>[identity]</td><td>Full spectrum entry for an entity</td></tr>
+  <tr><td><code>getActiveIPOs</code></td><td>[]</td><td>List all active contract IPOs</td></tr>
+  <tr><td><code>getIPOBids</code></td><td>[index]</td><td>Bids for a specific contract IPO</td></tr>
+  <tr><td><code>getContractFunction</code></td><td>[index, inputType, inputSize, payload]</td><td>Forward contract call to Qubic node (not yet implemented)</td></tr>
+  <tr><td><code>getSyncState</code></td><td>[]</td><td>Returns sync status and current tick</td></tr>
+  <tr><td><code>getContractFunctionResult</code></td><td>[dejavu]</td><td>Retrieve contract call result (not yet implemented)</td></tr>
+  <tr><td><code>getProposal</code></td><td>[id]</td><td>Get governance proposal (returns null)</td></tr>
+  <tr><td><code>getBallot</code></td><td>[id]</td><td>Get ballot data (returns null)</td></tr>
+  <tr><td><code>getVotesForProposal</code></td><td>[id]</td><td>Get votes for a proposal (returns [])</td></tr>
+  <tr><td><code>getVotesForVoter</code></td><td>[id]</td><td>Get votes by a voter (returns [])</td></tr>
+</table>
+
+<h2 id="rpc-qonduit">Qonduit-Native Methods</h2>
+<p>Extended methods unique to Qonduit, providing additional query capabilities beyond the Bob API.</p>
+
+<table class="method-table">
+  <tr><th>Method</th><th>Params</th><th>Description</th></tr>
+  <tr><td><code>qonduit_getTick</code></td><td>[tick]</td><td>Get tick data by number</td></tr>
+  <tr><td><code>qonduit_getTickTransactions</code></td><td>[tick]</td><td>Get all transactions for a tick</td></tr>
+  <tr><td><code>qonduit_getEntityActivity</code></td><td>[identity, limit?]</td><td>Get transactions for an entity (default limit: 100)</td></tr>
+  <tr><td><code>qonduit_search</code></td><td>[query]</td><td>Search ticks, transactions, and entities</td></tr>
+  <tr><td><code>qonduit_getAssetHolders</code></td><td>[]</td><td>Get asset holders (not yet implemented)</td></tr>
+  <tr><td><code>qonduit_getCustomMessages</code></td><td>[tick]</td><td>Get custom messages for a tick</td></tr>
+  <tr><td><code>qonduit_getOracleData</code></td><td>[]</td><td>Get oracle data (not yet implemented)</td></tr>
+  <tr><td><code>qonduit_getEntityTokens</code></td><td>[identity]</td><td>Get token balances for an entity</td></tr>
+  <tr><td><code>qonduit_getDeFiPositions</code></td><td>[identity]</td><td>Get DeFi positions (not yet implemented)</td></tr>
+  <tr><td><code>qonduit_getEpochInfo</code></td><td>[]</td><td>Get current epoch and tick</td></tr>
+  <tr><td><code>qonduit_getLogEvents</code></td><td>[tick]</td><td>Get count of log events for a tick</td></tr>
+  <tr><td><code>qonduit_getSpectrumChanges</code></td><td>[]</td><td>Get spectrum changes (not yet implemented)</td></tr>
+  <tr><td><code>qonduit_getEntityBalances</code></td><td>[identity]</td><td>Get full spectrum entry for an entity</td></tr>
+</table>
+
+<h2 id="rpc-examples">JSON-RPC Examples</h2>
+
+<h4>Get Current Tick Info</h4>
+<pre><code>// Request
+{
+  "jsonrpc": "2.0",
+  "method": "getCurrentTickInfo",
+  "params": [],
+  "id": 1
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "epoch": 142,
+    "tick": 14285714
+  },
+  "id": 1
+}</code></pre>
+
+<h4>Get Entity</h4>
+<pre><code>// Request
+{
+  "jsonrpc": "2.0",
+  "method": "getEntity",
+  "params": ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+  "id": 2
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "identity": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "incoming": 5000000,
+    "outgoing": 2500000,
+    "number_of_incoming_transfers": 12,
+    "number_of_outgoing_transfers": 8,
+    "latest_incoming_transfer_tick": 14285710,
+    "latest_outgoing_transfer_tick": 14285700
+  },
+  "id": 2
+}</code></pre>
+
+<h4>Get Balance</h4>
+<pre><code>// Request
+{
+  "jsonrpc": "2.0",
+  "method": "getBalance",
+  "params": ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+  "id": 3
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "balance": 2500000
+  },
+  "id": 3
+}</code></pre>
+
+<h4>Get Transactions for Tick</h4>
+<pre><code>// Request
+{
+  "jsonrpc": "2.0",
+  "method": "getTransactionsForTick",
+  "params": [14285714],
+  "id": 4
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": [
+    {
+      "hash": "abcdef1234...",
+      "source_hex": "aabbcc...",
+      "source_identity": "AAA...",
+      "destination_hex": "112233...",
+      "destination_identity": "BBB...",
+      "amount": 1000000,
+      "tick": 14285714,
+      "input_type": 0,
+      "input_size": 0,
+      "input_hex": "",
+      "input_type_name": "simple_transfer",
+      "signature_hex": "deadbeef..."
+    }
+  ],
+  "id": 4
+}</code></pre>
+
+<h4>Qonduit-Native: Entity Activity</h4>
+<pre><code>// Request
+{
+  "jsonrpc": "2.0",
+  "method": "qonduit_getEntityActivity",
+  "params": ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 10],
+  "id": 5
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": [
+    { "hash": "abcdef...", "amount": 500000, "tick": 14285714, "..." : "..." },
+    { "hash": "123456...", "amount": 200000, "tick": 14285700, "..." : "..." }
+  ],
+  "id": 5
+}</code></pre>
+
+
+<!-- ========== WebSocket ========== -->
+<h1 id="ws-overview">WebSocket Subscriptions</h1>
+<p>Real-time streaming of blockchain events via WebSocket. Each topic provides a persistent connection that forwards messages from the corresponding NATS subject.</p>
+
+<h2 id="ws-topics">Topics</h2>
+
+<table>
+  <tr><th>Endpoint</th><th>NATS Subject</th><th>Description</th></tr>
+  <tr><td><code><span class="badge badge-ws">WS</span> /ws/tick</code></td><td><code>QONDUIT.TICK</code></td><td>Real-time tick data as new blocks are finalized</td></tr>
+  <tr><td><code><span class="badge badge-ws">WS</span> /ws/tx</code></td><td><code>QONDUIT.TX</code></td><td>Real-time transaction data</td></tr>
+  <tr><td><code><span class="badge badge-ws">WS</span> /ws/entity</code></td><td><code>QONDUIT.ENTITY</code></td><td>Entity state updates</td></tr>
+  <tr><td><code><span class="badge badge-ws">WS</span> /ws/spectrum</code></td><td><code>QONDUIT.SPECTRUM</code></td><td>Spectrum (balance) changes</td></tr>
+  <tr><td><code><span class="badge badge-ws">WS</span> /ws/custom-message</code></td><td><code>QONDUIT.CUSTMSG</code></td><td>Custom messages from the chain</td></tr>
+  <tr><td><code><span class="badge badge-ws">WS</span> /ws/contract-fn</code></td><td><code>QONDUIT.CFNR</code></td><td>Contract function call results</td></tr>
+</table>
+
+<h3>Connection Protocol</h3>
+<p>On successful connection, the server sends a JSON confirmation message:</p>
+<pre><code>{"status": "connected", "subject": "QONDUIT.TICK"}</code></pre>
+<p>After confirmation, the server streams JSON messages as they arrive from the NATS bus. The connection stays open until either the client or server closes it.</p>
+<p>WebSocket ping/pong frames are handled automatically by the server.</p>
+
+<h3>Optional Query Parameters</h3>
+<table>
+  <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>epoch</code></td><td>u16</td><td>Filter by epoch number (optional, reserved for future use)</td></tr>
+</table>
+
+<h2 id="ws-client">JavaScript Client Example</h2>
+<pre><code>// Connect to the tick subscription
+const ws = new WebSocket('ws://localhost:8080/ws/tick');
+
+ws.onopen = () => {
+  console.log('Connected to Qonduit WebSocket');
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Tick update:', data);
+  // Example output: { computor_index: 0, epoch: 142, tick: 14285714, ... }
+};
+
+ws.onerror = (err) => {
+  console.error('WebSocket error:', err);
+};
+
+ws.onclose = () => {
+  console.log('WebSocket closed');
+};
+
+// To subscribe to transactions instead:
+// const wsTx = new WebSocket('ws://localhost:8080/ws/tx');
+
+// To subscribe to entity updates:
+// const wsEntity = new WebSocket('ws://localhost:8080/ws/entity');
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  ws.close();
+  process.exit(0);
+});</code></pre>
+
+<h3>cURL (for testing)</h3>
+<p>You can test WebSocket connections with tools like <code>wscat</code>:</p>
+<pre><code># Install wscat
+npm install -g wscat
+
+# Connect to tick stream
+wscat -c ws://localhost:8080/ws/tick
+
+# Connect to transaction stream
+wscat -c ws://localhost:8080/ws/tx</code></pre>
+
+
+<!-- ========== ERROR CODES ========== -->
+<h1 id="errors">Error Codes</h1>
+<p>JSON-RPC 2.0 standard error codes used by Qonduit:</p>
+
+<table>
+  <tr><th>Code</th><th>Name</th><th>Description</th></tr>
+  <tr><td><code>-32700</code></td><td>Parse error</td><td>Invalid JSON was received by the server</td></tr>
+  <tr><td><code>-32600</code></td><td>Invalid request</td><td>The JSON sent is not a valid Request object</td></tr>
+  <tr><td><code>-32601</code></td><td>Method not found</td><td>The method does not exist or is not available</td></tr>
+  <tr><td><code>-32602</code></td><td>Invalid params</td><td>Invalid method parameter(s) &mdash; missing params, not an array, or missing param at an index</td></tr>
+  <tr><td><code>-32000</code></td><td>Server error</td><td>Internal server error (e.g., storage failure, invalid identity, hash decode error)</td></tr>
+</table>
+
+<h3>Error Response Example</h3>
+<pre><code>// Request with unknown method
+{
+  "jsonrpc": "2.0",
+  "method": "nonExistentMethod",
+  "params": [],
+  "id": 1
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "result": null,
+  "error": {
+    "code": -32601,
+    "message": "Method not found: nonExistentMethod"
+  },
+  "id": 1
+}</code></pre>
+
+<h3>REST API Error Responses</h3>
+<p>REST endpoints return standard HTTP status codes:</p>
+<table>
+  <tr><th>Status</th><th>Meaning</th></tr>
+  <tr><td><code>200</code></td><td>Success</td></tr>
+  <tr><td><code>400</code></td><td>Bad request (invalid hash, invalid identity)</td></tr>
+  <tr><td><code>404</code></td><td>Resource not found (tick, transaction, entity, etc.)</td></tr>
+  <tr><td><code>500</code></td><td>Internal server error (storage failure)</td></tr>
+</table>
+
+
+<!-- ========== PIPELINE STATUS ========== -->
+<h1 id="pipeline-status">Pipeline Status</h1>
+<p>The <code>pipeline_status</code> field in <code>/system-info</code> and <code>getSystemInfo</code> indicates the current state of the data ingestion pipeline.</p>
+
+<div class="status-grid">
+  <div class="status-card">
+    <h4><span class="badge badge-live">live</span> Live</h4>
+    <p>The ingestion client is connected to a Qubic node and is caught up (within 100 ticks). Data is being indexed in real-time. This is the normal operating state.</p>
+  </div>
+  <div class="status-card">
+    <h4><span class="badge badge-catching">catching_up</span> Catching Up</h4>
+    <p>The ingestion client is connected but more than 100 ticks behind the node. Historical data is being backfilled. Query results may be incomplete.</p>
+  </div>
+  <div class="status-card">
+    <h4><span class="badge badge-disconnected">disconnected</span> Disconnected</h4>
+    <p>No connection to any Qubic node. The ingestion client is offline or has lost its connection. Existing indexed data is still queryable.</p>
+  </div>
+  <div class="status-card">
+    <h4><span class="badge tag-system">query_only</span> Query Only</h4>
+    <p>Ingestion is disabled (query-only mode). The server serves existing indexed data without connecting to a Qubic node. Useful for read replicas or offline analysis.</p>
+  </div>
+</div>
+
+<h3>Status Derivation Logic</h3>
+<pre><code>if ingestion_disabled:
+    pipeline_status = "query_only"
+elif not ingestion_connected:
+    pipeline_status = "disconnected"
+elif ticks_behind > 100:
+    pipeline_status = "catching_up"
+else:
+    pipeline_status = "live"</code></pre>
+
+
+<!-- ========== DATA TYPES ========== -->
+<h1 id="data-types">Data Types</h1>
+
+<h2>TickData</h2>
+<p>Represents a block/tick on the Qubic blockchain.</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>computor_index</code></td><td>u16</td><td>Index of the computor that created this tick</td></tr>
+  <tr><td><code>epoch</code></td><td>u16</td><td>Epoch number</td></tr>
+  <tr><td><code>tick</code></td><td>u32</td><td>Tick/block number</td></tr>
+  <tr><td><code>timestamp</code></td><td>u64</td><td>Unix timestamp in milliseconds</td></tr>
+  <tr><td><code>time_lock</code></td><td>string (hex)</td><td>32-byte time lock value (hex-encoded)</td></tr>
+</table>
+
+<h2>Transaction</h2>
+<p>A decoded transaction record. Maximum size: 1168 bytes (80 header + 1024 payload + 64 signature).</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>hash</code></td><td>string</td><td>64-character hex transaction hash</td></tr>
+  <tr><td><code>source_hex</code></td><td>string</td><td>Sender public key (hex)</td></tr>
+  <tr><td><code>source_identity</code></td><td>string</td><td>Sender base26 identity</td></tr>
+  <tr><td><code>destination_hex</code></td><td>string</td><td>Destination public key (hex)</td></tr>
+  <tr><td><code>destination_identity</code></td><td>string</td><td>Destination base26 identity</td></tr>
+  <tr><td><code>amount</code></td><td>i64</td><td>Transfer amount in Qubic units</td></tr>
+  <tr><td><code>tick</code></td><td>u32</td><td>Target tick/block number</td></tr>
+  <tr><td><code>input_type</code></td><td>u16</td><td>Input type code (see below)</td></tr>
+  <tr><td><code>input_size</code></td><td>u16</td><td>Payload size in bytes</td></tr>
+  <tr><td><code>input_hex</code></td><td>string</td><td>Raw input payload (hex)</td></tr>
+  <tr><td><code>input_type_name</code></td><td>string</td><td>Human-readable type name</td></tr>
+  <tr><td><code>signature_hex</code></td><td>string</td><td>64-byte signature (hex)</td></tr>
+</table>
+
+<h3>Input Types</h3>
+<table>
+  <tr><th>Code</th><th>Name</th><th>Description</th></tr>
+  <tr><td>0</td><td><code>simple_transfer</code></td><td>Basic Qubic transfer, no payload</td></tr>
+  <tr><td>1</td><td><code>asset_issuance</code></td><td>Issue a new asset</td></tr>
+  <tr><td>2</td><td><code>asset_ownership_transfer</code></td><td>Transfer asset ownership</td></tr>
+  <tr><td>3</td><td><code>asset_possession_transfer</code></td><td>Transfer asset possession</td></tr>
+  <tr><td>24</td><td><code>contract_bid</code></td><td>Bid on a contract IPO</td></tr>
+  <tr><td>25</td><td><code>contract_ask</code></td><td>Ask on a contract IPO</td></tr>
+  <tr><td>26</td><td><code>dividend_distribution</code></td><td>Distribute asset dividends</td></tr>
+  <tr><td>other</td><td><code>smart_contract_call</code></td><td>Smart contract invocation (input_type &gt; 0)</td></tr>
+</table>
+
+<h2>Entity</h2>
+<p>An account/entity on the Qubic network.</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>identity</code></td><td>string</td><td>60-character base26-encoded identity</td></tr>
+  <tr><td><code>incoming</code></td><td>i64</td><td>Total incoming Qubic amount</td></tr>
+  <tr><td><code>outgoing</code></td><td>i64</td><td>Total outgoing Qubic amount</td></tr>
+  <tr><td><code>number_of_incoming_transfers</code></td><td>u32</td><td>Count of incoming transfers</td></tr>
+  <tr><td><code>number_of_outgoing_transfers</code></td><td>u32</td><td>Count of outgoing transfers</td></tr>
+  <tr><td><code>latest_incoming_transfer_tick</code></td><td>u32</td><td>Most recent incoming transfer tick</td></tr>
+  <tr><td><code>latest_outgoing_transfer_tick</code></td><td>u32</td><td>Most recent outgoing transfer tick</td></tr>
+</table>
+
+<h2>SpectrumEntry</h2>
+<p>Balance sheet entry for an entity. Entry size: 144 bytes on disk.</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>identity</code></td><td>string</td><td>60-character base26-encoded identity</td></tr>
+  <tr><td><code>incoming_amount</code></td><td>i64</td><td>Total incoming amount</td></tr>
+  <tr><td><code>outgoing_amount</code></td><td>i64</td><td>Total outgoing amount</td></tr>
+  <tr><td><code>balance</code></td><td>i64</td><td>Computed balance (incoming - outgoing)</td></tr>
+  <tr><td><code>number_of_incoming_transfers</code></td><td>u64</td><td>Transfer count (incoming)</td></tr>
+  <tr><td><code>number_of_outgoing_transfers</code></td><td>u64</td><td>Transfer count (outgoing)</td></tr>
+  <tr><td><code>latest_incoming_transfer_tick</code></td><td>u32</td><td>Most recent incoming tick</td></tr>
+  <tr><td><code>latest_outgoing_transfer_tick</code></td><td>u32</td><td>Most recent outgoing tick</td></tr>
+  <tr><td><code>asset_issued</code></td><td>u32</td><td>Asset issuance index</td></tr>
+  <tr><td><code>asset_owned</code></td><td>u32</td><td>Asset ownership index</td></tr>
+</table>
+
+<h2>Computors</h2>
+<p>The set of computors for a given epoch.</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>epoch</code></td><td>u16</td><td>Epoch number</td></tr>
+  <tr><td><code>public_keys</code></td><td>array[string]</td><td>Hex-encoded public keys of all computors</td></tr>
+  <tr><td><code>public_key_identities</code></td><td>array[string]</td><td>Base26-encoded identities of all computors</td></tr>
+</table>
+
+<h2>AssetRecord</h2>
+<p>An asset (token) record on the Qubic blockchain.</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>asset_type</code></td><td>string</td><td><code>Issuance</code>, <code>Ownership</code>, or <code>Possession</code></td></tr>
+  <tr><td><code>managed</code></td><td>bool</td><td>Whether the asset is managed by a contract</td></tr>
+  <tr><td><code>issuance_index</code></td><td>u32</td><td>Unique asset issuance index</td></tr>
+  <tr><td><code>issuance_amount</code></td><td>i64</td><td>Total issued amount</td></tr>
+  <tr><td><code>number_of_units</code></td><td>i64</td><td>Number of units</td></tr>
+  <tr><td><code>unit_of_measurement</code></td><td>u64</td><td>Unit of measurement code</td></tr>
+  <tr><td><code>denomination</code></td><td>u32</td><td>Decimal denomination</td></tr>
+  <tr><td><code>value_per_unit</code></td><td>i64</td><td>Value per unit</td></tr>
+  <tr><td><code>name</code></td><td>string</td><td>Asset name</td></tr>
+  <tr><td><code>description</code></td><td>string</td><td>Asset description</td></tr>
+  <tr><td><code>url</code></td><td>string</td><td>Asset URL</td></tr>
+  <tr><td><code>hash</code></td><td>[u8; 32]</td><td>Asset hash (binary)</td></tr>
+  <tr><td><code>managing_contract_index</code></td><td>i32</td><td>Managing contract index (-1 if unmanaged)</td></tr>
+  <tr><td><code>issuing_entity</code></td><td>string</td><td>Identity of the issuing entity</td></tr>
+  <tr><td><code>owning_entity</code></td><td>string</td><td>Identity of the owning entity</td></tr>
+  <tr><td><code>possessing_entity</code></td><td>string</td><td>Identity of the possessing entity</td></tr>
+</table>
+
+<h2>ContractIpo</h2>
+<p>Contract Initial Public Offering data with bids.</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code>contract_index</code></td><td>u32</td><td>Contract index</td></tr>
+  <tr><td><code>bids</code></td><td>array[ContractBid]</td><td>List of bids on this contract</td></tr>
+</table>
+<h4>ContractBid</h4>
+<table>
+  <tr><td><code>identity</code></td><td>string</td><td>Bidder's base26 identity</td></tr>
+  <tr><td><code>bid_amount</code></td><td>i64</td><td>Bid amount in Qubic units</td></tr>
+</table>
+
+
+<!-- ========== OPENAPI ========== -->
+<h1 id="openapi">OpenAPI &amp; Scalar Reference</h1>
+<p>Qonduit serves a machine-readable OpenAPI 3.1 specification and an interactive Scalar API reference UI.</p>
+
+<table>
+  <tr><th>Endpoint</th><th>Content Type</th><th>Description</th></tr>
+  <tr><td><code>/openapi.json</code></td><td>application/json</td><td>OpenAPI 3.1 JSON spec for all REST endpoints</td></tr>
+  <tr><td><code>/scalar</code></td><td>text/html</td><td>Interactive Scalar API reference UI (try-it-out for all endpoints)</td></tr>
+</table>
+
+<pre><code># Fetch the OpenAPI spec
+curl http://localhost:8080/openapi.json
+
+# Open the Scalar UI in a browser
+open http://localhost:8080/scalar</code></pre>
+
+<p style="margin-top:48px;padding-top:24px;border-top:1px solid var(--border);color:var(--text-dim);font-size:0.85rem;">
+  Qonduit API Documentation &mdash; Generated from source.
+  For issues, see <a href="https://github.com/alez-rpc/qonduit">GitHub</a>.
+</p>
+
+</main>
+</body>
+</html>

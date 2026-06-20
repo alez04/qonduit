@@ -1,7 +1,7 @@
-//! OpenAPI spec and Scalar API docs UI.
+//! OpenAPI spec and API documentation UI.
 //!
-//! Serves the OpenAPI JSON at `/openapi.json` and an interactive
-//! Scalar API reference UI at `/docs`.
+//! Serves the OpenAPI JSON at `/openapi.json`, a comprehensive documentation
+//! page at `/docs`, and an interactive Scalar API reference at `/scalar`.
 
 use axum::{http::StatusCode, response::IntoResponse, response::Response, routing::get, Json, Router};
 use serde_json::json;
@@ -484,6 +484,19 @@ async fn openapi_json() -> Response {
     Json(spec).into_response()
 }
 
+/// Comprehensive API documentation HTML page.
+const DOCS_PAGE: &str = include_str!("docs_page.html");
+
+/// Handler: serve comprehensive API docs page.
+async fn docs_page() -> Response {
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        DOCS_PAGE,
+    )
+        .into_response()
+}
+
 /// Handler: serve Scalar API docs HTML.
 async fn scalar_docs() -> Response {
     let configuration = serde_json::json!({
@@ -504,5 +517,6 @@ async fn scalar_docs() -> Response {
 pub fn docs_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/openapi.json", get(openapi_json))
-        .route("/docs", get(scalar_docs))
+        .route("/docs", get(docs_page))
+        .route("/scalar", get(scalar_docs))
 }
