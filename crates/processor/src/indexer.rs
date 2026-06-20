@@ -3,6 +3,7 @@
 //! Each `index_*` method deserializes a JSON payload from NATS and writes
 //! the appropriate keys and values into the warm tier column families.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -10,15 +11,34 @@ use qonduit_core::{AssetRecord, Computors, ContractIpo, EntityData, PipelineStat
 use qonduit_storage::WarmStorage;
 use tracing::debug;
 
-#[derive(Clone)]
 pub struct Indexer {
     storage: Arc<WarmStorage>,
     pipeline: Arc<PipelineState>,
+    /// Last tick seen by index_transaction (for sequential tx_index).
+    tx_last_tick: Arc<AtomicU32>,
+    /// Sequential counter for transactions within the current tick.
+    tx_counter: Arc<AtomicU32>,
+}
+
+impl Clone for Indexer {
+    fn clone(&self) -> Self {
+        Self {
+            storage: Arc::clone(&self.storage),
+            pipeline: Arc::clone(&self.pipeline),
+            tx_last_tick: Arc::clone(&self.tx_last_tick),
+            tx_counter: Arc::clone(&self.tx_counter),
+        }
+    }
 }
 
 impl Indexer {
     pub fn new(storage: Arc<WarmStorage>, pipeline: Arc<PipelineState>) -> Self {
-        Self { storage, pipeline }
+        Self {
+            storage,
+            pipeline,
+            tx_last_tick: Arc::new(AtomicU32::new(0)),
+            tx_counter: Arc::new(AtomicU32::new(0)),
+        }
     }
 
     // ------------------------------------------------------------------
@@ -115,15 +135,14 @@ impl Indexer {
         // Store the transaction payload keyed by hash
         self.storage.put_tx(&hash_bytes, payload)?;
 
-        // Index by tick. Use trailing bytes of the hash as a tx_index to
-        // avoid collisions (the ingestion layer doesn't currently attach a
-        // per-tick index).
-        let tx_index = u32::from_be_bytes([
-            hash_bytes[28],
-            hash_bytes[29],
-            hash_bytes[30],
-            hash_bytes[31],
-        ]);
+        // Index by tick using a sequential counter to avoid collisions.
+        // When the tick changes, reset the counter.
+        let current = self.tx_last_tick.load(Ordering::Relaxed);
+        if tx.tick != current {
+            self.tx_last_tick.store(tx.tick, Ordering::Relaxed);
+            self.tx_counter.store(0, Ordering::Relaxed);
+        }
+        let tx_index = self.tx_counter.fetch_add(1, Ordering::Relaxed);
         self.storage.put_tx_for_tick(tx.tick, tx_index, &hash_bytes)?;
 
         // Index by source entity
@@ -321,6 +340,27 @@ impl Indexer {
     }
 
     // ------------------------------------------------------------------
+    // Oracle data
+    // ------------------------------------------------------------------
+
+    /// Index oracle data, keyed by tick.
+    pub async fn index_oracle(&self, payload: &[u8]) -> Result<()> {
+        let entry: serde_json::Value =
+            serde_json::from_slice(payload).context("Failed to deserialize oracle data")?;
+
+        let tick = entry["tick"].as_u64().unwrap_or(0) as u32;
+        let tick = if tick == 0 {
+            self.pipeline.indexed_tick.load(std::sync::atomic::Ordering::Relaxed)
+        } else {
+            tick
+        };
+
+        self.storage.put_oracle(tick, payload)?;
+        debug!(tick = tick, "Indexed oracle data");
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
     // Custom message
     // ------------------------------------------------------------------
 
@@ -330,7 +370,11 @@ impl Indexer {
             serde_json::from_slice(payload).context("Failed to deserialize custom message")?;
 
         let tick = msg["tick"].as_u64().unwrap_or(0) as u32;
-        let index = msg["message_type"].as_u64().unwrap_or(0) as u32;
+
+        // Use a sequential index within this tick to avoid collisions when
+        // multiple messages share the same message_type. Count existing
+        // entries to determine the next available index.
+        let index = self.storage.count_custom_messages_for_tick(tick).unwrap_or(0) as u32;
 
         self.storage.put_custom_message(tick, index, payload)?;
 

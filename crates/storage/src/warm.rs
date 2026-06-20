@@ -38,6 +38,7 @@ pub const CF_ENTITY_ASSET: &str = "entity_asset";
 pub const CF_LOG_EVENT: &str = "log_event";
 pub const CF_TICK_VOTE: &str = "tick_vote";
 pub const CF_META: &str = "meta";
+pub const CF_ORACLE: &str = "oracle";
 
 const ALL_CFS: &[&str] = &[
     CF_TICK,
@@ -54,6 +55,7 @@ const ALL_CFS: &[&str] = &[
     CF_LOG_EVENT,
     CF_TICK_VOTE,
     CF_META,
+    CF_ORACLE,
 ];
 
 // ---------------------------------------------------------------------------
@@ -440,6 +442,25 @@ impl WarmStorage {
         Ok(())
     }
 
+    /// Get the number of custom messages for a given tick.
+    pub fn count_custom_messages_for_tick(&self, tick: u32) -> Result<usize> {
+        let cf = self.db.cf_handle(CF_CUSTOM_MESSAGE).unwrap();
+        let prefix = tick.to_be_bytes();
+        let iter = self
+            .db
+            .iterator_cf(cf, IteratorMode::From(&prefix, Direction::Forward));
+
+        let mut count = 0;
+        for item in iter {
+            let (key, _value) = item?;
+            if key.len() != 8 || key[..4] != prefix {
+                break;
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Get all custom messages for a given tick.
     pub fn get_custom_messages_for_tick(&self, tick: u32) -> Result<Vec<Vec<u8>>> {
         let cf = self.db.cf_handle(CF_CUSTOM_MESSAGE).unwrap();
@@ -513,6 +534,30 @@ impl WarmStorage {
             assets.push(asset_index);
         }
         Ok(assets)
+    }
+
+    /// Get all entities that hold a given asset (reverse of get_assets_for_entity).
+    ///
+    /// Scans the `entity_asset` column family for entries where the last 4 bytes
+    /// (the asset index) match `asset_index`.
+    pub fn get_holders_for_asset(&self, asset_index: u32) -> Result<Vec<[u8; 32]>> {
+        let cf = self.db.cf_handle(CF_ENTITY_ASSET).unwrap();
+        let iter = self.db.iterator_cf(cf, IteratorMode::Start);
+
+        let mut holders = Vec::new();
+        let idx_bytes = asset_index.to_be_bytes();
+        for item in iter {
+            let (key, _value) = item?;
+            if key.len() != 36 {
+                continue;
+            }
+            if key[32..36] == idx_bytes {
+                let mut entity = [0u8; 32];
+                entity.copy_from_slice(&key[..32]);
+                holders.push(entity);
+            }
+        }
+        Ok(holders)
     }
 
     // ------------------------------------------------------------------
@@ -659,6 +704,37 @@ impl WarmStorage {
     /// Set the current epoch in meta.
     pub fn set_current_epoch(&self, epoch: u16) -> Result<()> {
         self.put_meta(b"current_epoch", &epoch.to_be_bytes())
+    }
+
+    // ------------------------------------------------------------------
+    // Oracle operations
+    // ------------------------------------------------------------------
+
+    /// Store oracle data, keyed by tick.
+    pub fn put_oracle(&self, tick: u32, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_ORACLE).unwrap();
+        self.db.put_cf(cf, tick.to_be_bytes(), data)?;
+        Ok(())
+    }
+
+    /// Retrieve oracle data for a specific tick.
+    pub fn get_oracle(&self, tick: u32) -> Result<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_ORACLE).unwrap();
+        Ok(self.db.get_cf(cf, tick.to_be_bytes())?)
+    }
+
+    /// Get the latest oracle entry (highest tick) by reverse-scanning.
+    pub fn get_latest_oracle(&self) -> Result<Option<(u32, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_ORACLE).unwrap();
+        let iter = self.db.iterator_cf(cf, IteratorMode::End);
+        for item in iter {
+            let (key, value) = item?;
+            if key.len() == 4 {
+                let tick = u32::from_be_bytes([key[0], key[1], key[2], key[3]]);
+                return Ok(Some((tick, value.to_vec())));
+            }
+        }
+        Ok(None)
     }
 
     // ------------------------------------------------------------------

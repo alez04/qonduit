@@ -33,8 +33,8 @@ impl Default for ProcessorConfig {
     fn default() -> Self {
         Self {
             consumer_group: "qonduit-processors".to_string(),
-            catch_up: false,
-            batch_size: 10,
+            catch_up: true,
+            batch_size: 100,
         }
     }
 }

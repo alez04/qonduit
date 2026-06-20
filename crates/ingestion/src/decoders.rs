@@ -4,6 +4,7 @@
 //! at the correct byte offsets matching the C++ struct layouts.
 
 use anyhow::Result;
+use tracing::warn;
 use qonduit_core::identity::encode_base26;
 use qonduit_core::*;
 
@@ -469,9 +470,52 @@ pub fn decode_log_events(payload: &[u8]) -> Result<Vec<LogEvent>> {
             LOG_BURNING => 8,                           // burned amount (i64)
             LOG_DUST_BURNING => 8,                      // dust amount (i64)
             LOG_SPECTRUM_STATS => 224,                  // spectrum stats struct
+            LOG_ASSET_OWNERSHIP_MANAGING_CONTRACT_CHANGE => 64, // old(32) + new(32)
+            LOG_ASSET_POSSESSION_MANAGING_CONTRACT_CHANGE => 64, // old(32) + new(32)
+            LOG_CONTRACT_RESERVE_DEDUCTION => 8,        // amount (i64)
+            LOG_ORACLE_QUERY_STATUS_CHANGE => 8,        // query_id(i64)
+            LOG_ORACLE_SUBSCRIBER_MESSAGE => {
+                // Variable length: first 2 bytes are the message length
+                if data_start + 2 <= payload.len() {
+                    u16::from_le_bytes([payload[data_start], payload[data_start + 1]]) as usize + 2
+                } else {
+                    break;
+                }
+            }
+            LOG_CUSTOM_MESSAGE => {
+                // Variable length: first 2 bytes are the message length
+                if data_start + 2 <= payload.len() {
+                    u16::from_le_bytes([payload[data_start], payload[data_start + 1]]) as usize + 2
+                } else {
+                    break;
+                }
+            }
             _ => {
-                // Unknown event type; stop parsing to avoid misalignment
-                break;
+                // Unknown event type: try to read the size byte at offset+19
+                // (byte 19 of the log event header, right after event_type)
+                // If the size byte is nonzero, skip that many data bytes.
+                // If zero or unreadable, log a warning and break to avoid
+                // misalignment since we cannot determine the event boundary.
+                if offset + 19 < payload.len() {
+                    let size_byte = payload[offset + 19];
+                    if size_byte > 0 {
+                        size_byte as usize
+                    } else {
+                        warn!(
+                            event_type,
+                            offset,
+                            "Unknown log event type with zero size; stopping parse to avoid misalignment"
+                        );
+                        break;
+                    }
+                } else {
+                    warn!(
+                        event_type,
+                        offset,
+                        "Unknown log event type; stopping parse to avoid misalignment"
+                    );
+                    break;
+                }
             }
         };
 

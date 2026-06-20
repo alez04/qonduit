@@ -96,6 +96,7 @@ pub fn openapi_spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "400": { "description": "Invalid tick value" },
                         "404": { "description": "Tick not found" }
                     }
                 }
@@ -125,6 +126,7 @@ pub fn openapi_spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "400": { "description": "Invalid tick value" },
                         "404": { "description": "Tick not found" }
                     }
                 }
@@ -151,6 +153,7 @@ pub fn openapi_spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "400": { "description": "Invalid transaction hash: must be 64 hex characters" },
                         "404": { "description": "Transaction not found" }
                     }
                 }
@@ -299,6 +302,7 @@ pub fn openapi_spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "400": { "description": "Invalid asset index" },
                         "404": { "description": "Asset not found" }
                     }
                 }
@@ -363,6 +367,7 @@ pub fn openapi_spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "400": { "description": "Invalid contract IPO index" },
                         "404": { "description": "Contract IPO not found" }
                     }
                 }
@@ -381,7 +386,98 @@ pub fn openapi_spec() -> serde_json::Value {
                         }
                     ],
                     "responses": {
-                        "200": { "description": "Search results" }
+                        "200": { "description": "Search results" },
+                        "400": { "description": "Empty search query" }
+                    }
+                }
+            },
+            "/v1/spectrum/{id}": {
+                "get": {
+                    "operationId": "getSpectrumEntry",
+                    "summary": "Get spectrum entry by identity",
+                    "tags": ["entities"],
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Base26 encoded identity",
+                            "schema": { "type": "string" }
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Spectrum entry data",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "type": "object", "additionalProperties": true }
+                                }
+                            }
+                        },
+                        "400": { "description": "Invalid identity" },
+                        "404": { "description": "Spectrum entry not found" }
+                    }
+                }
+            },
+            "/v1/active-ipos": {
+                "get": {
+                    "operationId": "getActiveIpos",
+                    "summary": "List active contract IPOs",
+                    "tags": ["contracts"],
+                    "responses": {
+                        "200": {
+                            "description": "List of active IPOs",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/ContractIpo" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/rpc": {
+                "post": {
+                    "operationId": "jsonRpc",
+                    "summary": "JSON-RPC 2.0 endpoint",
+                    "tags": ["rpc"],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/JsonRpcRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "JSON-RPC response",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/JsonRpcResponse" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/metrics": {
+                "get": {
+                    "operationId": "getMetrics",
+                    "summary": "Prometheus metrics",
+                    "tags": ["system"],
+                    "responses": {
+                        "200": {
+                            "description": "Prometheus text format metrics",
+                            "content": {
+                                "text/plain": {
+                                    "schema": { "type": "string" }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -462,6 +558,38 @@ pub fn openapi_spec() -> serde_json::Value {
                     "type": "object",
                     "description": "Contract IPO data",
                     "additionalProperties": true
+                },
+                "JsonRpcRequest": {
+                    "type": "object",
+                    "required": ["jsonrpc", "method"],
+                    "properties": {
+                        "jsonrpc": { "type": "string", "description": "JSON-RPC version, must be \"2.0\"" },
+                        "method": { "type": "string", "description": "RPC method name" },
+                        "params": {
+                            "description": "Method parameters (array or object)",
+                            "oneOf": [
+                                { "type": "array" },
+                                { "type": "object" }
+                            ]
+                        },
+                        "id": { "description": "Request ID" }
+                    }
+                },
+                "JsonRpcResponse": {
+                    "type": "object",
+                    "properties": {
+                        "jsonrpc": { "type": "string" },
+                        "result": { "description": "Successful result" },
+                        "error": {
+                            "type": "object",
+                            "properties": {
+                                "code": { "type": "integer" },
+                                "message": { "type": "string" },
+                                "data": { "description": "Optional error data" }
+                            }
+                        },
+                        "id": { "description": "Request ID" }
+                    }
                 }
             }
         },
@@ -473,7 +601,8 @@ pub fn openapi_spec() -> serde_json::Value {
             { "name": "computors", "description": "Computor lists" },
             { "name": "assets", "description": "Asset records" },
             { "name": "contracts", "description": "Contract IPO data" },
-            { "name": "search", "description": "Search functionality" }
+            { "name": "search", "description": "Search functionality" },
+            { "name": "rpc", "description": "JSON-RPC 2.0 API" }
         ]
     })
 }

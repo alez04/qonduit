@@ -9,22 +9,18 @@ use axum::{
     Router,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        State,
     },
     response::IntoResponse,
     routing::get,
 };
 use futures_util::StreamExt;
-use serde::Deserialize;
+
 use tracing::{info, warn};
 
 use crate::AppState;
 
-#[derive(Deserialize)]
-struct WsQuery {
-    /// Optional: filter by epoch number.
-    epoch: Option<u16>,
-}
+
 
 /// Build WebSocket routes.
 pub fn routes() -> Router<Arc<AppState>> {
@@ -43,7 +39,6 @@ pub fn routes() -> Router<Arc<AppState>> {
 
 async fn ws_tick(
     ws: WebSocketUpgrade,
-    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.TICK".to_string();
@@ -52,7 +47,6 @@ async fn ws_tick(
 
 async fn ws_tx(
     ws: WebSocketUpgrade,
-    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.TX".to_string();
@@ -61,7 +55,6 @@ async fn ws_tx(
 
 async fn ws_entity(
     ws: WebSocketUpgrade,
-    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.ENTITY".to_string();
@@ -70,7 +63,6 @@ async fn ws_entity(
 
 async fn ws_spectrum(
     ws: WebSocketUpgrade,
-    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.SPECTRUM".to_string();
@@ -79,7 +71,6 @@ async fn ws_spectrum(
 
 async fn ws_custom_message(
     ws: WebSocketUpgrade,
-    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.CUSTMSG".to_string();
@@ -88,7 +79,6 @@ async fn ws_custom_message(
 
 async fn ws_contract_fn(
     ws: WebSocketUpgrade,
-    Query(_query): Query<WsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let subject = "QONDUIT.CFNR".to_string();

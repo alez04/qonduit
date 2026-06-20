@@ -471,7 +471,22 @@ async fn dispatch_method(
             Ok(serde_json::json!({"results": results}))
         }
         "qonduit_getAssetHolders" => {
-            Ok(serde_json::json!([]))
+            let asset_index = extract_u32_param(params, 0)?;
+            match state.storage.get_holders_for_asset(asset_index) {
+                Ok(holders) => {
+                    let items: Vec<serde_json::Value> = holders.iter()
+                        .map(|key| {
+                            let identity_str = identity::encode_base26(key);
+                            serde_json::json!({"identity": identity_str})
+                        })
+                        .collect();
+                    Ok(serde_json::json!({
+                        "asset_index": asset_index,
+                        "holders": items,
+                    }))
+                }
+                Err(e) => Err(e),
+            }
         }
         "qonduit_getCustomMessages" => {
             let tick = extract_u32_param(params, 0)?;
@@ -482,7 +497,19 @@ async fn dispatch_method(
             Ok(serde_json::json!(items))
         }
         "qonduit_getOracleData" => {
-            Ok(serde_json::json!(null))
+            match state.storage.get_latest_oracle()? {
+                Some((tick, data)) => {
+                    let mut value: serde_json::Value = serde_json::from_slice(&data)?;
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("indexed_tick".to_string(), serde_json::json!(tick));
+                    }
+                    Ok(value)
+                }
+                None => Ok(serde_json::json!({
+                    "data": null,
+                    "note": "Oracle data has not been indexed yet. The QONDUIT_ORACLE stream exists but no data has been received."
+                })),
+            }
         }
         "qonduit_getEntityTokens" => {
             let id = extract_string_param(params, 0)?;
@@ -523,7 +550,27 @@ async fn dispatch_method(
             Ok(serde_json::json!(msgs.len()))
         }
         "qonduit_getSpectrumChanges" => {
-            Ok(serde_json::json!([]))
+            let id = extract_string_param(params, 0)?;
+            let key = identity::decode_base26(&id)
+                .ok_or_else(|| anyhow::anyhow!("Invalid identity"))?;
+            match state.storage.get_spectrum_entry(&key)? {
+                Some(data) => {
+                    let entry: serde_json::Value = serde_json::from_slice(&data)?;
+                    let balance = entry.get("balance").cloned().unwrap_or(serde_json::json!(0));
+                    Ok(serde_json::json!({
+                        "identity": id,
+                        "current_balance": balance,
+                        "changes": [],
+                        "note": "Returns current spectrum balance. Historical change tracking is not yet indexed."
+                    }))
+                }
+                None => Ok(serde_json::json!({
+                    "identity": id,
+                    "current_balance": 0,
+                    "changes": [],
+                    "note": "Entity not found in spectrum"
+                })),
+            }
         }
         "qonduit_getEntityBalances" => {
             let id = extract_string_param(params, 0)?;

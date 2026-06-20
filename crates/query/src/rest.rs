@@ -52,8 +52,16 @@ pub fn routes() -> Router<Arc<AppState>> {
 fn storage_err(e: anyhow::Error) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        serde_json::json!({"error": "Storage error", "message": e.to_string()}).to_string(),
+        Json(serde_json::json!({"error": "Storage error", "message": e.to_string()})),
+    )
+        .into_response()
+}
+
+/// Return a 400 Bad Request with a JSON error body.
+fn bad_request(msg: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": msg})),
     )
         .into_response()
 }
@@ -120,9 +128,13 @@ async fn current_tick(State(state): State<Arc<AppState>>) -> Response {
 
 async fn get_tick(
     State(state): State<Arc<AppState>>,
-    Path(tick): Path<u32>,
+    Path(tick_str): Path<String>,
 ) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    let tick = match tick_str.parse::<u32>() {
+        Ok(t) => t,
+        _ => return bad_request("Invalid tick: must be a valid u32"),
+    };
     match state.storage.get_tick(tick) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -131,9 +143,13 @@ async fn get_tick(
 
 async fn get_tick_transactions(
     State(state): State<Arc<AppState>>,
-    Path(tick): Path<u32>,
-) -> impl IntoResponse {
+    Path(tick_str): Path<String>,
+) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    let tick = match tick_str.parse::<u32>() {
+        Ok(t) => t,
+        _ => return bad_request("Invalid tick: must be a valid u32"),
+    };
     match state.storage.get_tx_hashes_for_tick(tick) {
         Ok(hashes) => {
             let mut txs = Vec::new();
@@ -161,7 +177,7 @@ async fn get_transaction(
             arr.copy_from_slice(&bytes);
             arr
         }
-        _ => return (StatusCode::BAD_REQUEST, "Invalid transaction hash").into_response(),
+        _ => return bad_request("Invalid transaction hash: must be 64 hex characters"),
     };
     match state.storage.get_tx(&hash_bytes) {
         Ok(data) => json_or_404(data),
@@ -176,7 +192,7 @@ async fn get_entity(
     crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
-        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+        None => return bad_request("Invalid identity: must be a valid base26-encoded string"),
     };
     match state.storage.get_entity(&key) {
         Ok(data) => json_or_404(data),
@@ -191,7 +207,7 @@ async fn get_spectrum_entry(
     crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
-        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+        None => return bad_request("Invalid identity: must be a valid base26-encoded string"),
     };
     match state.storage.get_spectrum_entry(&key) {
         Ok(data) => json_or_404(data),
@@ -210,9 +226,13 @@ async fn get_computors(State(state): State<Arc<AppState>>) -> Response {
 
 async fn get_computors_epoch(
     State(state): State<Arc<AppState>>,
-    Path(epoch): Path<u16>,
+    Path(epoch_str): Path<String>,
 ) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    let epoch = match epoch_str.parse::<u16>() {
+        Ok(e) => e,
+        _ => return bad_request("Invalid epoch: must be a valid u16"),
+    };
     match state.storage.get_computors(epoch) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -240,7 +260,7 @@ async fn get_owned_assets(
     crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
-        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+        None => return bad_request("Invalid identity: must be a valid base26-encoded string"),
     };
 
     // Try the entity→asset index first (populated by the indexer).
@@ -280,7 +300,7 @@ async fn get_possessed_assets(
     crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
-        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+        None => return bad_request("Invalid identity: must be a valid base26-encoded string"),
     };
 
     // Try the entity→asset index first (populated by the indexer).
@@ -315,9 +335,13 @@ async fn get_possessed_assets(
 
 async fn get_asset(
     State(state): State<Arc<AppState>>,
-    Path(index): Path<u32>,
+    Path(index_str): Path<String>,
 ) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    let index = match index_str.parse::<u32>() {
+        Ok(i) => i,
+        _ => return bad_request("Invalid asset index: must be a valid u32"),
+    };
     match state.storage.get_asset(index) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -326,9 +350,13 @@ async fn get_asset(
 
 async fn get_contract_ipo(
     State(state): State<Arc<AppState>>,
-    Path(index): Path<u32>,
+    Path(index_str): Path<String>,
 ) -> Response {
     crate::metrics::REST_REQUESTS.inc();
+    let index = match index_str.parse::<u32>() {
+        Ok(i) => i,
+        _ => return bad_request("Invalid contract IPO index: must be a valid u32"),
+    };
     match state.storage.get_contract_ipo(index) {
         Ok(data) => json_or_404(data),
         Err(e) => storage_err(e),
@@ -356,7 +384,7 @@ async fn get_entity_transactions(
     crate::metrics::REST_REQUESTS.inc();
     let key = match identity::decode_base26(&id) {
         Some(k) => k,
-        None => return (StatusCode::BAD_REQUEST, "Invalid identity").into_response(),
+        None => return bad_request("Invalid identity: must be a valid base26-encoded string"),
     };
     match state.storage.get_tx_hashes_for_entity(&key, 100) {
         Ok(hashes) => {
@@ -382,7 +410,7 @@ async fn search(
     let q = query.trim().to_string();
 
     if q.is_empty() {
-        return (StatusCode::BAD_REQUEST, "Empty search query").into_response();
+        return bad_request("Empty search query");
     }
 
     // If it looks like a tick number (all digits), redirect to tick data

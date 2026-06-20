@@ -153,6 +153,17 @@ impl Consumer {
                 self.batch_size,
                 StreamLag::None,
             )),
+            tokio::spawn(Self::consume_stream(
+                js.clone(),
+                "QONDUIT_ORACLE",
+                "qonduit-processor-oracle",
+                |payload, indexer| async move { indexer.index_oracle(&payload).await },
+                self.indexer.clone(),
+                pipeline.clone(),
+                self.catch_up,
+                self.batch_size,
+                StreamLag::None,
+            )),
         ];
 
         for handle in handles {
@@ -195,7 +206,7 @@ impl Consumer {
         };
 
         // Create durable pull consumer (or get existing one)
-        let consumer: PullConsumer = match stream
+        let mut consumer: PullConsumer = match stream
             .create_consumer(jetstream::consumer::pull::Config {
                 durable_name: Some(durable_name.to_string()),
                 deliver_policy,
@@ -218,6 +229,24 @@ impl Consumer {
         info!(
             "Consuming {stream_name} as {durable_name} (catch_up={catch_up}, batch={batch_size})"
         );
+
+        // Log initial pending count so we can see catch-up progress
+        match consumer.info().await {
+            Ok(info) => {
+                info!(
+                    stream = stream_name,
+                    pending = info.num_pending,
+                    "Stream has {} pending messages",
+                    info.num_pending
+                );
+            }
+            Err(e) => {
+                warn!(
+                    stream = stream_name,
+                    "Could not fetch initial consumer info: {e}"
+                );
+            }
+        }
 
         let mut consumer = consumer;
 
@@ -256,27 +285,35 @@ impl Consumer {
 
             // Update lag metrics by querying consumer info after each batch
             if lag_target != StreamLag::None {
-                if let Ok(info) = consumer.info().await {
-                    let pending = info.num_pending;
-                    match lag_target {
-                        StreamLag::Tick => {
-                            pipeline.tick_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
+                match consumer.info().await {
+                    Ok(info) => {
+                        let pending = info.num_pending;
+                        match lag_target {
+                            StreamLag::Tick => {
+                                pipeline.tick_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            StreamLag::Tx => {
+                                pipeline.tx_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            StreamLag::Entity => {
+                                pipeline.entity_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            StreamLag::None => {}
                         }
-                        StreamLag::Tx => {
-                            pipeline.tx_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        StreamLag::Entity => {
-                            pipeline.entity_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        StreamLag::None => {}
+                        debug!(
+                            stream = stream_name,
+                            pending,
+                            delivered = info.delivered.stream_sequence,
+                            acked = info.ack_floor.stream_sequence,
+                            "Consumer lag updated"
+                        );
                     }
-                    debug!(
-                        stream = stream_name,
-                        pending,
-                        delivered = info.delivered.stream_sequence,
-                        acked = info.ack_floor.stream_sequence,
-                        "Consumer lag updated"
-                    );
+                    Err(e) => {
+                        warn!(
+                            stream = stream_name,
+                            "Failed to fetch consumer info for lag tracking: {e}"
+                        );
+                    }
                 }
             }
         }
