@@ -316,7 +316,12 @@ impl IngestionClient {
         let mut broadcast_since_last_stats: u64 = 0;
         let mut published_since_last_stats: u64 = 0;
 
-        let mut rotation_interval = tokio::time::interval(PEER_ROTATION_INTERVAL);
+        // Use interval_at so the first tick fires after the full rotation period,
+        // not immediately (tokio::time::interval fires the first tick instantly).
+        let mut rotation_interval = tokio::time::interval_at(
+            tokio::time::Instant::now() + PEER_ROTATION_INTERVAL,
+            PEER_ROTATION_INTERVAL,
+        );
         rotation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         // Track when we last saw a broadcast packet (non-heartbeat)
