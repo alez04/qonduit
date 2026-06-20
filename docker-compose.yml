@@ -1,17 +1,18 @@
 services:
   nats:
     image: nats:2.10-alpine
-    command: ["--jetstream", "--store_dir", "/data"]
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
     ports:
       - "4222:4222"   # Client connections
       - "8222:8222"   # HTTP monitoring
     volumes:
       - nats-data:/data
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8222/healthz"]
       interval: 5s
       timeout: 3s
       retries: 3
+      start_period: 5s
     restart: unless-stopped
 
   qonduit:
