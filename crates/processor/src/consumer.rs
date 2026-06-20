@@ -245,6 +245,19 @@ impl Consumer {
             DeliverPolicy::New
         };
 
+        // In catch-up mode, delete existing durable consumers so they're
+        // recreated with DeliverPolicy::All. Otherwise the old consumer (from
+        // a previous run with DeliverPolicy::New) is returned unchanged and
+        // ignores the new deliver_policy.
+        if catch_up {
+            if let Err(e) = stream.delete_consumer(durable_name).await {
+                // Consumer may not exist yet, which is fine
+                debug!("Delete existing consumer {durable_name}: {e}");
+            } else {
+                info!("Deleted existing consumer {durable_name} for catch-up recreation");
+            }
+        }
+
         // Create durable pull consumer (or get existing one)
         let mut consumer: PullConsumer = match stream
             .create_consumer(jetstream::consumer::pull::Config {
