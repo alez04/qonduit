@@ -508,9 +508,9 @@ impl BackfillWorker {
     async fn connect_and_process(&mut self, current_tick: &mut u32) -> Result<()> {
         let mut attempts = 0;
         while attempts < MAX_PEERS_PER_WORKER {
-            // Prefer BOB peers (port 21842) for backfill — they store full history.
-            // Falls back to best_peer() if no BOB peers are available.
-            let addr = match self.peer_manager.best_bob_peer().await {
+            // Try BOB peers first (they store full history), but fall back
+            // to best_peer() when BOB nodes don't respond to type 16 requests.
+            let addr = match self.peer_manager.best_peer().await {
                 Some(a) => a,
                 None => anyhow::bail!("No peers available"),
             };
