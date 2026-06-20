@@ -104,6 +104,7 @@ impl Indexer {
         self.pipeline.indexed_tick.store(tick.tick, std::sync::atomic::Ordering::Relaxed);
         self.pipeline.indexed_epoch.store(tick.epoch, std::sync::atomic::Ordering::Relaxed);
         self.pipeline.ticks_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.pipeline.total_ticks_indexed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         debug!(tick = tick.tick, epoch = tick.epoch, "Indexed tick");
         Ok(())

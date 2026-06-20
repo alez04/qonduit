@@ -12,6 +12,46 @@ use tracing::{debug, error, info, warn};
 
 use crate::indexer::Indexer;
 
+/// Read available memory from `/proc/meminfo` on Linux.
+/// Returns megabytes. Falls back to 4096 if unable to read.
+fn available_memory_mb() -> u64 {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemAvailable:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|v| v.parse().ok())
+                .map(|kb: u64| kb / 1024)
+        })
+        .unwrap_or(4096) // default 4GB if can't read
+}
+
+/// Dynamically calculate batch size based on pending message count and available memory.
+fn calculate_batch(base_batch: usize, pending: u64, mem_mb: u64) -> usize {
+    // Pending-based scaling
+    let pending_batch = if pending > 10_000 {
+        base_batch * 10 // Large catch-up: bigger batches
+    } else if pending > 1_000 {
+        base_batch * 5
+    } else if pending > 100 {
+        base_batch * 2
+    } else {
+        base_batch // Near live: small batches
+    };
+
+    // Memory-aware adjustment
+    if mem_mb < 1_024 {
+        // Low memory: halve the batch size, minimum 1
+        std::cmp::max(pending_batch / 2, 1)
+    } else if mem_mb > 8_192 {
+        // High memory: double the batch size
+        pending_batch * 2
+    } else {
+        pending_batch
+    }
+}
+
 pub struct Consumer {
     nats: NatsClient,
     indexer: Indexer,
@@ -226,34 +266,35 @@ impl Consumer {
             },
         };
 
+        // Get initial pending count and calculate dynamic batch size
+        let mem_mb = available_memory_mb();
+        let initial_pending = consumer
+            .info()
+            .await
+            .map(|info| info.num_pending)
+            .unwrap_or(0);
+
+        let dynamic_batch = calculate_batch(batch_size, initial_pending, mem_mb);
         info!(
-            "Consuming {stream_name} as {durable_name} (catch_up={catch_up}, batch={batch_size})"
+            "Consuming {stream_name} as {durable_name} (catch_up={catch_up}, base_batch={batch_size}, dynamic_batch={dynamic_batch}, pending={initial_pending}, mem_mb={mem_mb})"
         );
 
         // Log initial pending count so we can see catch-up progress
-        match consumer.info().await {
-            Ok(info) => {
-                info!(
-                    stream = stream_name,
-                    pending = info.num_pending,
-                    "Stream has {} pending messages",
-                    info.num_pending
-                );
-            }
-            Err(e) => {
-                warn!(
-                    stream = stream_name,
-                    "Could not fetch initial consumer info: {e}"
-                );
-            }
+        if initial_pending > 0 {
+            info!(
+                stream = stream_name,
+                pending = initial_pending,
+                "Stream has {initial_pending} pending messages"
+            );
         }
 
         let mut consumer = consumer;
+        let mut current_batch = dynamic_batch;
 
         loop {
             let mut messages = match consumer
                 .fetch()
-                .max_messages(batch_size)
+                .max_messages(current_batch)
                 .expires(std::time::Duration::from_secs(5))
                 .messages()
                 .await
@@ -283,11 +324,15 @@ impl Consumer {
                 }
             }
 
-            // Update lag metrics by querying consumer info after each batch
-            if lag_target != StreamLag::None {
-                match consumer.info().await {
-                    Ok(info) => {
-                        let pending = info.num_pending;
+            // Update lag metrics and recalculate dynamic batch size
+            match consumer.info().await {
+                Ok(info) => {
+                    let pending = info.num_pending;
+
+                    // Recalculate batch size based on current pending count and memory
+                    current_batch = calculate_batch(batch_size, pending, mem_mb);
+
+                    if lag_target != StreamLag::None {
                         match lag_target {
                             StreamLag::Tick => {
                                 pipeline.tick_lag.store(pending, std::sync::atomic::Ordering::Relaxed);
@@ -300,20 +345,22 @@ impl Consumer {
                             }
                             StreamLag::None => {}
                         }
-                        debug!(
-                            stream = stream_name,
-                            pending,
-                            delivered = info.delivered.stream_sequence,
-                            acked = info.ack_floor.stream_sequence,
-                            "Consumer lag updated"
-                        );
                     }
-                    Err(e) => {
-                        warn!(
-                            stream = stream_name,
-                            "Failed to fetch consumer info for lag tracking: {e}"
-                        );
-                    }
+
+                    debug!(
+                        stream = stream_name,
+                        pending,
+                        batch = current_batch,
+                        delivered = info.delivered.stream_sequence,
+                        acked = info.ack_floor.stream_sequence,
+                        "Consumer lag updated"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        stream = stream_name,
+                        "Failed to fetch consumer info for lag tracking: {e}"
+                    );
                 }
             }
         }

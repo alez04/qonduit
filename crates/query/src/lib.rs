@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Query server: HTTP/REST, JSON-RPC 2.0, and WebSocket endpoints.
 //!
 //! Serves the public API that dApps and clients use to query indexed data.

@@ -1,7 +1,7 @@
 //! Pipeline state: shared, lock-free counters for tracking ingestion and indexing progress.
 
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -40,6 +40,14 @@ pub struct PipelineState {
     /// Estimated number of unprocessed entity messages in the NATS stream.
     pub entity_lag: AtomicU64,
 
+    // ------------------------------------------------------------------
+    // Indexing rate tracking (for ETA estimation)
+    // ------------------------------------------------------------------
+    /// Unix timestamp (seconds) when indexing started.
+    pub indexing_start_time: AtomicU64,
+    /// Total ticks indexed (monotonically increasing, used for rate calculation).
+    pub total_ticks_indexed: AtomicU64,
+
     /// When the pipeline started.
     started_at: Instant,
 }
@@ -75,11 +83,20 @@ pub struct PipelineStatusResponse {
     pub entity_lag: u64,
     /// Seconds since the pipeline started.
     pub uptime_seconds: u64,
+    /// Estimated seconds until the processor catches up to the node (0 if caught up or unknown).
+    pub estimated_seconds_to_live: u64,
+    /// Average indexing rate in ticks per second (computed over uptime).
+    pub avg_indexing_rate: f64,
 }
 
 impl PipelineState {
     /// Create a new, zeroed pipeline state.
     pub fn new() -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         Self {
             ingestion_connected: AtomicBool::new(false),
             ingestion_disabled: AtomicBool::new(false),
@@ -93,6 +110,8 @@ impl PipelineState {
             tick_lag: AtomicU64::new(0),
             tx_lag: AtomicU64::new(0),
             entity_lag: AtomicU64::new(0),
+            indexing_start_time: AtomicU64::new(now),
+            total_ticks_indexed: AtomicU64::new(0),
             started_at: Instant::now(),
         }
     }
@@ -123,6 +142,28 @@ impl PipelineState {
             "live".to_string()
         };
 
+        // Calculate average indexing rate and estimated time to live
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let start_time = self.indexing_start_time.load(Ordering::Relaxed);
+        let total_indexed = self.total_ticks_indexed.load(Ordering::Relaxed);
+
+        let elapsed = now.saturating_sub(start_time);
+        let avg_indexing_rate = if elapsed > 0 {
+            total_indexed as f64 / elapsed as f64
+        } else {
+            0.0
+        };
+
+        let ticks_behind = behind.max(0) as u64;
+        let estimated_seconds_to_live = if avg_indexing_rate > 0.0 && ticks_behind > 0 {
+            (ticks_behind as f64 / avg_indexing_rate) as u64
+        } else {
+            0
+        };
+
         PipelineStatusResponse {
             pipeline_status,
             ingestion_connected: connected,
@@ -138,6 +179,8 @@ impl PipelineState {
             tx_lag: self.tx_lag.load(Ordering::Relaxed),
             entity_lag: self.entity_lag.load(Ordering::Relaxed),
             uptime_seconds: self.started_at.elapsed().as_secs(),
+            estimated_seconds_to_live,
+            avg_indexing_rate,
         }
     }
 }
