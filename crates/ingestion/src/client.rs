@@ -339,7 +339,9 @@ impl IngestionClient {
                 result = protocol::read_packet(stream) => {
                     match result {
                         Ok((msg_type, dejavu, payload)) => {
-                            // Handle CurrentTickInfo responses inline
+                            // Handle CurrentTickInfo responses inline.
+                            // Also update last_broadcast since receiving this
+                            // proves the node is alive (prevents false silent detection).
                             if msg_type == 28 && payload.len() >= 8 {
                                 let _tick_duration = u16::from_le_bytes([payload[0], payload[1]]);
                                 let epoch = u16::from_le_bytes([payload[2], payload[3]]);
@@ -354,6 +356,7 @@ impl IngestionClient {
                                     metrics::CURRENT_TICK.set(tick as i64);
                                 }
                                 packets_since_last_stats += 1;
+                                last_broadcast = Instant::now(); // node is alive
                                 continue;
                             }
 

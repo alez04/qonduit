@@ -28,8 +28,12 @@ use crate::protocol;
 /// this range and skip forward to avoid wasting TCP round-trips.
 const MAX_CONSECUTIVE_FAILURES: u32 = 50;
 
-/// How far to skip forward after hitting consecutive failures.
-const FAILURE_SKIP_SIZE: u32 = 10_000;
+/// Initial skip size when hitting consecutive failures. Grows exponentially
+/// on repeated skips (10K -> 20K -> 40K -> ... -> 1M max).
+const FAILURE_SKIP_INITIAL: u32 = 10_000;
+
+/// Maximum skip size to avoid overshooting the epoch range.
+const FAILURE_SKIP_MAX: u32 = 1_000_000;
 
 /// Maximum number of peers to try per worker connection cycle.
 const MAX_PEERS_PER_WORKER: usize = 8;
@@ -224,7 +228,20 @@ impl BackfillClient {
             self.config.end_tick
         };
 
-        let start_tick = self.config.start_tick;
+        let mut start_tick = self.config.start_tick;
+
+        // When start_tick=0 (default), only backfill recent history that nodes
+        // actually store. Qubic nodes typically keep ~100K recent ticks. Going
+        // further back just wastes TCP round-trips getting EndResponses.
+        // Set QONDUIT_BACKFILL_START_TICK explicitly to scan a wider range.
+        if start_tick == 0 && end_tick > 100_000 {
+            start_tick = end_tick.saturating_sub(100_000);
+            info!(
+                "Backfill: auto-setting start_tick to {start_tick} (end_tick={end_tick}, \
+                 nodes only serve recent ~100K ticks. Set QONDUIT_BACKFILL_START_TICK=0 to scan all)"
+            );
+        }
+
         if start_tick >= end_tick {
             info!("Backfill: start_tick ({start_tick}) >= end_tick ({end_tick}), nothing to do");
             self.shared.running.store(false, Ordering::Relaxed);
@@ -535,6 +552,7 @@ impl BackfillWorker {
         // Process each tick in our range
         let mut tick = *current_tick;
         let mut consecutive_failures: u32 = 0;
+        let mut skip_size: u32 = FAILURE_SKIP_INITIAL;
 
         while tick < self.worker_end {
             // Check if another worker already claimed this tick
@@ -547,14 +565,16 @@ impl BackfillWorker {
             // Skip ahead if we've hit too many consecutive failures.
             // This happens when scanning into tick ranges the node doesn't have
             // (e.g. early epoch ticks that were pruned long ago).
+            // Skip size doubles each time to cross large gaps quickly.
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                let skip_to = (tick + FAILURE_SKIP_SIZE).min(self.worker_end);
+                let skip_to = (tick + skip_size).min(self.worker_end);
                 info!(
-                    "Worker {}: skipping tick {tick}..{skip_to} ({} consecutive failures, node doesn't have this range)",
+                    "Worker {}: skipping tick {tick}..{skip_to} ({skip_size} ticks, {} consecutive failures)",
                     self.worker_id, consecutive_failures
                 );
                 tick = skip_to;
                 consecutive_failures = 0;
+                skip_size = (skip_size * 2).min(FAILURE_SKIP_MAX);
                 continue;
             }
 
@@ -563,6 +583,7 @@ impl BackfillWorker {
             match tick_data_result {
                 Ok(data) => {
                     consecutive_failures = 0; // reset on success
+                    skip_size = FAILURE_SKIP_INITIAL; // reset skip on success
                     // Decode and publish tick data
                     if let Err(e) = self
                         .decode_and_publish(8, &data, epoch)
